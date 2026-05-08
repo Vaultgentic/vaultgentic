@@ -1,6 +1,13 @@
 export const vaultgenticCoreName = "vaultgentic-core";
 
 export {
+  initializeSearchDatabase,
+  schemaVersion,
+  type DatabaseStatus,
+  type SearchDatabaseConfig,
+} from "./database.js";
+
+export {
   configDirectoryName,
   configFileName,
   defaultIgnoredPaths,
