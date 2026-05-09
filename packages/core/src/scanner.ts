@@ -20,6 +20,7 @@ export async function scanVaultFiles(
   options: { includeContentHash?: boolean } = {},
 ): Promise<VaultFileMetadata[]> {
   const vaultPath = path.resolve(config.vaultPath);
+  const includeContentHash = options.includeContentHash ?? false;
   const ignoredPaths = normalizeIgnoredPaths(
     vaultPath,
     config.ignoredPaths ?? [],
@@ -28,9 +29,9 @@ export async function scanVaultFiles(
 
   await scanDirectory({
     vaultPath,
-    relativeDirectoryPath: "",
+    directoryPath: vaultPath,
     ignoredPaths,
-    includeContentHash: options.includeContentHash === true,
+    includeContentHash,
     files,
   });
 
@@ -39,19 +40,15 @@ export async function scanVaultFiles(
 
 async function scanDirectory(options: {
   vaultPath: string;
-  relativeDirectoryPath: string;
+  directoryPath: string;
   ignoredPaths: string[];
   includeContentHash: boolean;
   files: VaultFileMetadata[];
 }): Promise<void> {
-  const directoryPath = toAbsolutePath(
-    options.vaultPath,
-    options.relativeDirectoryPath,
-  );
-  const entries = await readdir(directoryPath, { withFileTypes: true });
+  const entries = await readdir(options.directoryPath, { withFileTypes: true });
 
   for (const entry of entries) {
-    const absolutePath = path.join(directoryPath, entry.name);
+    const absolutePath = path.join(options.directoryPath, entry.name);
     const relativePath = resolveScannedRelativePath(
       options.vaultPath,
       absolutePath,
@@ -62,7 +59,7 @@ async function scanDirectory(options: {
     }
 
     if (entry.isDirectory()) {
-      await scanDirectory({ ...options, relativeDirectoryPath: relativePath });
+      await scanDirectory({ ...options, directoryPath: absolutePath });
       continue;
     }
 
@@ -116,12 +113,6 @@ function isIgnored(relativePath: string, ignoredPaths: string[]): boolean {
       relativePath === ignoredPath ||
       relativePath.startsWith(`${ignoredPath}/`),
   );
-}
-
-function toAbsolutePath(vaultPath: string, relativePath: string): string {
-  return relativePath === ""
-    ? vaultPath
-    : path.join(vaultPath, ...relativePath.split("/"));
 }
 
 function resolveScannedRelativePath(
