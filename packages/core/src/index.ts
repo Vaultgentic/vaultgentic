@@ -2,6 +2,7 @@ export const vaultgenticCoreName = "vaultgentic-core";
 
 export {
   initializeSearchDatabase,
+  SearchDatabaseError,
   schemaVersion,
   type DatabaseStatus,
   type SearchDatabaseConfig,
@@ -10,6 +11,7 @@ export {
 export {
   configDirectoryName,
   configFileName,
+  ConfigServiceError,
   defaultIgnoredPaths,
   getDefaultConfigPath,
   loadConfig,
@@ -19,6 +21,7 @@ export {
 
 export {
   scanVaultFiles,
+  VaultScannerError,
   type VaultFileMetadata,
   type VaultScanConfig,
 } from "./scanner.js";
@@ -37,6 +40,7 @@ export {
   openSearchDatabase,
   rebuildSearchIndex,
   searchBm25,
+  SearchIndexerError,
   searchTitles,
   syncSearchIndex,
   type Bm25SearchResult,
@@ -48,9 +52,20 @@ export {
 
 export {
   readVaultTarget,
+  VaultReadError,
   type NoteMetadata,
   type ReadVaultChunkResult,
   type ReadVaultNoteResult,
   type ReadVaultTargetOptions,
   type ReadVaultTargetResult,
 } from "./read.js";
+
+export {
+  embedChunkText,
+  embedQueryText,
+  embedText,
+  EmbeddingServiceError,
+  embeddingModelMetadata,
+  type EmbeddingModelMetadata,
+  type EmbeddingResult,
+} from "./embedding.js";

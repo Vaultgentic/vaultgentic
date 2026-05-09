@@ -14,6 +14,13 @@ export const defaultIgnoredPaths = [
 export const configDirectoryName = "vaultgentic";
 export const configFileName = "config.json";
 
+export class ConfigServiceError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "ConfigServiceError";
+  }
+}
+
 const configSchema = z.object({
   vaultPath: z.string().trim().min(1),
   databasePath: z.string().trim().min(1),
@@ -34,8 +41,9 @@ export async function loadConfig(
   try {
     configText = await readFile(configPath, "utf8");
   } catch (error) {
-    throw new Error(
+    throw new ConfigServiceError(
       `Could not read config at ${configPath}: ${errorMessage(error)}`,
+      { cause: error },
     );
   }
 
@@ -43,15 +51,17 @@ export async function loadConfig(
   try {
     config = JSON.parse(configText);
   } catch (error) {
-    throw new Error(
+    throw new ConfigServiceError(
       `Invalid config JSON at ${configPath}: ${errorMessage(error)}`,
+      { cause: error },
     );
   }
 
   const parseResult = configSchema.safeParse(config);
   if (!parseResult.success) {
-    throw new Error(
+    throw new ConfigServiceError(
       `Invalid config at ${configPath}: ${z.prettifyError(parseResult.error)}`,
+      { cause: parseResult.error },
     );
   }
 
@@ -71,7 +81,7 @@ export function resolveVaultPath(
   options: { cwd?: string } = {},
 ): string {
   if (typeof vaultPath !== "string" || vaultPath.trim() === "") {
-    throw new Error("Vault path must be a non-empty string");
+    throw new ConfigServiceError("Vault path must be a non-empty string");
   }
 
   return path.resolve(options.cwd ?? process.cwd(), vaultPath);
@@ -82,7 +92,9 @@ export function resolveVaultRelativePath(
   candidatePath: string,
 ): string {
   if (typeof candidatePath !== "string" || candidatePath.trim() === "") {
-    throw new Error("Vault-relative path must be a non-empty string");
+    throw new ConfigServiceError(
+      "Vault-relative path must be a non-empty string",
+    );
   }
 
   const normalizedCandidatePath = candidatePath.replaceAll("\\", "/");
@@ -99,7 +111,9 @@ export function resolveVaultRelativePath(
     relativePath.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relativePath)
   ) {
-    throw new Error(`Path must stay inside the vault: ${candidatePath}`);
+    throw new ConfigServiceError(
+      `Path must stay inside the vault: ${candidatePath}`,
+    );
   }
 
   return toPublicPath(relativePath);

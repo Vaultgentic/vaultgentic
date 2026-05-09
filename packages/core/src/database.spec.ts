@@ -3,7 +3,11 @@ import { mkdtemp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { initializeSearchDatabase, schemaVersion } from "./database.js";
+import {
+  initializeSearchDatabase,
+  schemaVersion,
+  SearchDatabaseError,
+} from "./database.js";
 
 describe("GIVEN SQLite search database initialization", () => {
   describe("WHEN initializing a new database", () => {
@@ -96,7 +100,7 @@ describe("GIVEN SQLite search database initialization", () => {
             vaultPath: otherVaultPath,
             databasePath,
           }),
-        ).toThrow("vault root mismatch");
+        ).toThrow(SearchDatabaseError);
       });
     });
   });
@@ -150,6 +154,24 @@ describe("GIVEN SQLite search database initialization", () => {
         expect(() =>
           initializeSearchDatabase({ vaultPath, databasePath }),
         ).toThrow("missing Vaultgentic metadata");
+      });
+    });
+  });
+
+  describe("WHEN SQLite cannot open the database path", () => {
+    describe("THEN initialization is rejected with a localized error", () => {
+      it("SHOULD preserve a database service error boundary", async () => {
+        const cwd = await mkdtemp(
+          path.join(tmpdir(), "vaultgentic-db-open-error-"),
+        );
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, ".vaultgentic");
+        await mkdir(vaultPath);
+        await mkdir(databasePath);
+
+        expect(() =>
+          initializeSearchDatabase({ vaultPath, databasePath }),
+        ).toThrow(SearchDatabaseError);
       });
     });
   });

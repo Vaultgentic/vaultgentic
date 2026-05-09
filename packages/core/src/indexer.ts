@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { resolveVaultRelativePath } from "./config.js";
+import { ConfigServiceError, resolveVaultRelativePath } from "./config.js";
 import {
   chunkMarkdownNote,
   parseMarkdownNote,
@@ -59,6 +59,13 @@ export type TitleSearchResult = {
   rank: number;
 };
 
+export class SearchIndexerError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "SearchIndexerError";
+  }
+}
+
 type ExistingNoteRow = {
   mtimeMs: number;
   sizeBytes: number;
@@ -110,37 +117,59 @@ export async function indexVaultFile(
   config: SearchDatabaseConfig,
   vaultRelativePath: string,
 ): Promise<IndexFileResult> {
-  const relativePath = resolveVaultRelativePath(
-    config.vaultPath,
-    vaultRelativePath,
-  );
-  const absolutePath = path.join(config.vaultPath, relativePath);
-  const [fileStat, content] = await Promise.all([
-    stat(absolutePath),
-    readFile(absolutePath, "utf8"),
-  ]);
-  const metadata = {
-    path: relativePath,
-    mtime_ms: Math.trunc(fileStat.mtimeMs),
-    size_bytes: fileStat.size,
-    content_hash: hashContent(content),
-  };
-
-  const database = openSearchDatabase(config);
   try {
-    return indexFileContent(database, metadata, content);
-  } finally {
-    database.close();
+    const relativePath = resolveIndexPath(config.vaultPath, vaultRelativePath);
+    const absolutePath = path.join(config.vaultPath, relativePath);
+    const [fileStat, content] = await Promise.all([
+      stat(absolutePath),
+      readFile(absolutePath, "utf8"),
+    ]);
+    const metadata = {
+      path: relativePath,
+      mtime_ms: Math.trunc(fileStat.mtimeMs),
+      size_bytes: fileStat.size,
+      content_hash: hashContent(content),
+    };
+
+    const database = openSearchDatabase(config);
+    try {
+      return indexFileContent(database, metadata, content);
+    } finally {
+      database.close();
+    }
+  } catch (error) {
+    throw toSearchIndexerError(
+      `Failed to index vault file ${vaultRelativePath}`,
+      error,
+    );
+  }
+}
+
+function resolveIndexPath(
+  vaultPath: string,
+  vaultRelativePath: string,
+): string {
+  try {
+    return resolveVaultRelativePath(vaultPath, vaultRelativePath);
+  } catch (error) {
+    if (error instanceof ConfigServiceError) {
+      throw new SearchIndexerError(
+        `Invalid index path ${vaultRelativePath}: ${error.message}`,
+        { cause: error },
+      );
+    }
+
+    throw error;
   }
 }
 
 export async function syncSearchIndex(
   config: SearchDatabaseConfig,
 ): Promise<SyncSearchIndexResult> {
-  const files = await scanVaultFiles(config, { includeContentHash: true });
-  const database = openSearchDatabase(config);
-
+  let database: Database.Database | undefined;
   try {
+    const files = await scanVaultFiles(config, { includeContentHash: true });
+    database = openSearchDatabase(config);
     const result: SyncSearchIndexResult = {
       indexed: 0,
       skipped: 0,
@@ -152,7 +181,9 @@ export async function syncSearchIndex(
 
     for (const file of files) {
       if (file.content_hash === undefined) {
-        throw new Error(`Missing content hash for scanned file: ${file.path}`);
+        throw new SearchIndexerError(
+          `Missing content hash for scanned file: ${file.path}`,
+        );
       }
 
       const currentResult = indexCurrentFile(database, {
@@ -195,47 +226,55 @@ export async function syncSearchIndex(
     }
 
     return result;
+  } catch (error) {
+    throw toSearchIndexerError("Failed to sync search index", error);
   } finally {
-    database.close();
+    database?.close();
   }
 }
 
 export async function rebuildSearchIndex(
   config: SearchDatabaseConfig,
 ): Promise<RebuildSearchIndexResult> {
-  const files = await scanVaultFiles(config, { includeContentHash: true });
-  const preparedFiles: PreparedIndexedFile[] = [];
+  let database: Database.Database | undefined;
+  try {
+    const files = await scanVaultFiles(config, { includeContentHash: true });
+    const preparedFiles: PreparedIndexedFile[] = [];
 
-  for (const file of files) {
-    if (file.content_hash === undefined) {
-      throw new Error(`Missing content hash for scanned file: ${file.path}`);
+    for (const file of files) {
+      if (file.content_hash === undefined) {
+        throw new SearchIndexerError(
+          `Missing content hash for scanned file: ${file.path}`,
+        );
+      }
+
+      const content = await readFile(
+        path.join(config.vaultPath, file.path),
+        "utf8",
+      );
+      preparedFiles.push(
+        prepareFileContent(
+          { ...file, content_hash: file.content_hash },
+          content,
+        ),
+      );
     }
 
-    const content = await readFile(
-      path.join(config.vaultPath, file.path),
-      "utf8",
-    );
-    preparedFiles.push(
-      prepareFileContent({ ...file, content_hash: file.content_hash }, content),
-    );
-  }
-
-  const database = openSearchDatabase(config);
-
-  try {
-    ensureFtsTable(database);
+    database = openSearchDatabase(config);
+    const activeDatabase = database;
+    ensureFtsTable(activeDatabase);
     const currentPaths = new Set(files.map((file) => file.path));
-    const deleted = readIndexedPaths(database).filter(
+    const deleted = readIndexedPaths(activeDatabase).filter(
       (indexedPath) => !currentPaths.has(indexedPath),
     ).length;
     const now = Date.now();
     const indexedFiles: IndexFileResult[] = [];
 
-    database.transaction(() => {
-      clearIndexedContent(database);
+    activeDatabase.transaction(() => {
+      clearIndexedContent(activeDatabase);
 
       for (const preparedFile of preparedFiles) {
-        writePreparedFile(database, preparedFile, now);
+        writePreparedFile(activeDatabase, preparedFile, now);
         indexedFiles.push({
           path: preparedFile.metadata.path,
           status: "indexed",
@@ -249,10 +288,12 @@ export async function rebuildSearchIndex(
       skipped: 0,
       deleted,
       files: indexedFiles,
-      status: readDatabaseStatus(database, config),
+      status: readDatabaseStatus(activeDatabase, config),
     };
+  } catch (error) {
+    throw toSearchIndexerError("Failed to rebuild search index", error);
   } finally {
-    database.close();
+    database?.close();
   }
 }
 
@@ -265,8 +306,9 @@ export function searchBm25(
     return [];
   }
 
-  const database = openSearchDatabase(config);
+  let database: Database.Database | undefined;
   try {
+    database = openSearchDatabase(config);
     ensureFtsTable(database);
     const ftsQuery = buildFtsQuery(query);
     if (ftsQuery === "") {
@@ -305,8 +347,10 @@ export function searchBm25(
       startLine: row.startLine ?? undefined,
       endLine: row.endLine ?? undefined,
     }));
+  } catch (error) {
+    throw toSearchIndexerError("Failed to search BM25 index", error);
   } finally {
-    database.close();
+    database?.close();
   }
 }
 
@@ -319,8 +363,9 @@ export function searchTitles(
     return [];
   }
 
-  const database = openSearchDatabase(config);
+  let database: Database.Database | undefined;
   try {
+    database = openSearchDatabase(config);
     ensureTitleFtsTable(database);
     const ftsQuery = buildTitleFtsQuery(query);
     const candidateIds =
@@ -358,9 +403,30 @@ export function searchTitles(
       score: entry.score,
       rank: index + 1,
     }));
+  } catch (error) {
+    throw toSearchIndexerError("Failed to search note titles", error);
   } finally {
-    database.close();
+    database?.close();
   }
+}
+
+function toSearchIndexerError(
+  message: string,
+  error: unknown,
+): SearchIndexerError {
+  if (error instanceof SearchIndexerError) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return new SearchIndexerError(`${message}: ${error.message}`, {
+      cause: error,
+    });
+  }
+
+  return new SearchIndexerError(`${message}: ${String(error)}`, {
+    cause: error,
+  });
 }
 
 function indexFileContent(
@@ -746,7 +812,9 @@ function ensureFtsTable(database: Database.Database): void {
     )
     .get();
   if (row === undefined) {
-    throw new Error("SQLite FTS5 is not available for BM25 indexing");
+    throw new SearchIndexerError(
+      "SQLite FTS5 is not available for BM25 indexing",
+    );
   }
 }
 
@@ -757,7 +825,9 @@ function ensureTitleFtsTable(database: Database.Database): void {
     )
     .get();
   if (row === undefined) {
-    throw new Error("SQLite FTS5 is not available for title search indexing");
+    throw new SearchIndexerError(
+      "SQLite FTS5 is not available for title search indexing",
+    );
   }
 }
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeSearchDatabase } from "./database.js";
 import { indexVaultFile } from "./indexer.js";
-import { readVaultTarget } from "./read.js";
+import { readVaultTarget, VaultReadError } from "./read.js";
 
 describe("GIVEN a vault read service", () => {
   describe("WHEN a vault-relative note path is requested", () => {
@@ -124,9 +124,7 @@ describe("GIVEN a vault read service", () => {
 
         await expect(
           readVaultTarget(config, { target: "alpha" }),
-        ).rejects.toThrow(
-          "Read target must be a numeric chunk id or vault-relative .md note path",
-        );
+        ).rejects.toBeInstanceOf(VaultReadError);
       });
     });
   });
@@ -138,7 +136,7 @@ describe("GIVEN a vault read service", () => {
 
         await expect(
           readVaultTarget(config, { target: "../escape.md" }),
-        ).rejects.toThrow("Path must stay inside the vault");
+        ).rejects.toBeInstanceOf(VaultReadError);
       });
 
       it("SHOULD reject symlinks to outside-vault files", async () => {
@@ -153,6 +151,18 @@ describe("GIVEN a vault read service", () => {
         await expect(
           readVaultTarget(config, { target: "secret.md" }),
         ).rejects.toThrow("Path must stay inside the vault");
+      });
+    });
+  });
+
+  describe("WHEN a requested note does not exist", () => {
+    describe("THEN filesystem failures are localized", () => {
+      it("SHOULD use the vault read error type", async () => {
+        const config = await createFixture("missing-note");
+
+        await expect(
+          readVaultTarget(config, { target: "missing.md" }),
+        ).rejects.toBeInstanceOf(VaultReadError);
       });
     });
   });

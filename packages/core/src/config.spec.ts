@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  ConfigServiceError,
   defaultIgnoredPaths,
   getDefaultConfigPath,
   loadConfig,
@@ -150,6 +151,9 @@ describe("GIVEN Vaultgentic config loading", () => {
         await expect(loadConfig({ cwd })).rejects.toThrow(
           getDefaultConfigPath(),
         );
+        await expect(loadConfig({ cwd })).rejects.toBeInstanceOf(
+          ConfigServiceError,
+        );
       });
     });
   });
@@ -231,7 +235,7 @@ describe("GIVEN vault-relative path resolution", () => {
       it("SHOULD reject parent directory traversal", () => {
         expect(() =>
           resolveVaultRelativePath("/tmp/vault", "../outside.md"),
-        ).toThrow("inside the vault");
+        ).toThrow(ConfigServiceError);
       });
 
       it("SHOULD reject parent directory traversal with backslashes", () => {

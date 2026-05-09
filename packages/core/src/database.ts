@@ -4,6 +4,13 @@ import path from "node:path";
 
 export const schemaVersion = 1;
 
+export class SearchDatabaseError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "SearchDatabaseError";
+  }
+}
+
 export type SearchDatabaseConfig = {
   vaultPath: string;
   databasePath: string;
@@ -29,22 +36,25 @@ export type DatabaseStatus = {
 export function initializeSearchDatabase(
   config: SearchDatabaseConfig,
 ): DatabaseStatus {
-  const databaseExists = existsSync(config.databasePath);
-  mkdirSync(path.dirname(config.databasePath), { recursive: true });
-
-  const database = new Database(config.databasePath);
+  let database: Database.Database | undefined;
 
   try {
+    const databaseExists = existsSync(config.databasePath);
+    mkdirSync(path.dirname(config.databasePath), { recursive: true });
+
+    database = new Database(config.databasePath);
+    const activeDatabase = database;
+
     if (databaseExists) {
-      validateExistingDatabase(database, config);
+      validateExistingDatabase(activeDatabase, config);
     }
 
-    database.pragma("journal_mode = WAL");
-    database.pragma("synchronous = NORMAL");
-    database.pragma("foreign_keys = ON");
+    activeDatabase.pragma("journal_mode = WAL");
+    activeDatabase.pragma("synchronous = NORMAL");
+    activeDatabase.pragma("foreign_keys = ON");
 
-    database.transaction(() => {
-      database.exec(`
+    activeDatabase.transaction(() => {
+      activeDatabase.exec(`
         CREATE TABLE IF NOT EXISTS index_metadata (
           key TEXT PRIMARY KEY,
           value TEXT NOT NULL
@@ -85,8 +95,8 @@ export function initializeSearchDatabase(
         CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
       `);
 
-      if (isFts5Available(database)) {
-        database.exec(`
+      if (isFts5Available(activeDatabase)) {
+        activeDatabase.exec(`
           CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
             path,
             title,
@@ -102,7 +112,7 @@ export function initializeSearchDatabase(
         `);
       }
 
-      const insertMetadata = database.prepare(
+      const insertMetadata = activeDatabase.prepare(
         "INSERT OR IGNORE INTO index_metadata (key, value) VALUES (?, ?)",
       );
       insertMetadata.run("schema_version", String(schemaVersion));
@@ -114,17 +124,17 @@ export function initializeSearchDatabase(
     })();
 
     const storedSchemaVersion = Number(
-      readMetadata(database, "schema_version"),
+      readMetadata(activeDatabase, "schema_version"),
     );
     if (storedSchemaVersion !== schemaVersion) {
-      throw new Error(
+      throw new SearchDatabaseError(
         `Unsupported database schema version ${storedSchemaVersion}; expected ${schemaVersion}`,
       );
     }
 
-    const storedVaultPath = readMetadata(database, "vault_root");
+    const storedVaultPath = readMetadata(activeDatabase, "vault_root");
     if (storedVaultPath !== config.vaultPath) {
-      throw new Error(
+      throw new SearchDatabaseError(
         `Database vault root mismatch: ${storedVaultPath} does not match ${config.vaultPath}`,
       );
     }
@@ -133,20 +143,41 @@ export function initializeSearchDatabase(
       vaultPath: config.vaultPath,
       databasePath: config.databasePath,
       schemaVersion: storedSchemaVersion,
-      noteCount: readCount(database, "notes"),
-      chunkCount: readCount(database, "chunks"),
-      lastIndexedAt: readLastIndexedAt(database),
+      noteCount: readCount(activeDatabase, "notes"),
+      chunkCount: readCount(activeDatabase, "chunks"),
+      lastIndexedAt: readLastIndexedAt(activeDatabase),
       sqlite: {
         ok: true,
-        walEnabled: readJournalMode(database) === "wal",
-        foreignKeysEnabled: readForeignKeys(database),
-        fts5Available: isFts5Available(database),
-        sqliteVecAvailable: isSqliteVecAvailable(database),
+        walEnabled: readJournalMode(activeDatabase) === "wal",
+        foreignKeysEnabled: readForeignKeys(activeDatabase),
+        fts5Available: isFts5Available(activeDatabase),
+        sqliteVecAvailable: isSqliteVecAvailable(activeDatabase),
       },
     };
+  } catch (error) {
+    throw toSearchDatabaseError("Failed to initialize search database", error);
   } finally {
-    database.close();
+    database?.close();
   }
+}
+
+function toSearchDatabaseError(
+  message: string,
+  error: unknown,
+): SearchDatabaseError {
+  if (error instanceof SearchDatabaseError) {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return new SearchDatabaseError(`${message}: ${error.message}`, {
+      cause: error,
+    });
+  }
+
+  return new SearchDatabaseError(`${message}: ${String(error)}`, {
+    cause: error,
+  });
 }
 
 function validateExistingDatabase(
@@ -154,21 +185,21 @@ function validateExistingDatabase(
   config: SearchDatabaseConfig,
 ): void {
   if (!hasTable(database, "index_metadata")) {
-    throw new Error(
+    throw new SearchDatabaseError(
       `Existing database is missing Vaultgentic metadata: ${config.databasePath}`,
     );
   }
 
   const storedSchemaVersion = Number(readMetadata(database, "schema_version"));
   if (storedSchemaVersion !== schemaVersion) {
-    throw new Error(
+    throw new SearchDatabaseError(
       `Unsupported database schema version ${storedSchemaVersion}; expected ${schemaVersion}`,
     );
   }
 
   const storedVaultPath = readMetadata(database, "vault_root");
   if (storedVaultPath !== config.vaultPath) {
-    throw new Error(
+    throw new SearchDatabaseError(
       `Database vault root mismatch: ${storedVaultPath} does not match ${config.vaultPath}`,
     );
   }
@@ -188,7 +219,7 @@ function readMetadata(database: Database.Database, key: string): string {
     .get(key) as { value: string } | undefined;
 
   if (row === undefined) {
-    throw new Error(`Missing index metadata: ${key}`);
+    throw new SearchDatabaseError(`Missing index metadata: ${key}`);
   }
 
   return row.value;

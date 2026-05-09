@@ -21,6 +21,10 @@
     "./markdown": {
       "types": "./dist/markdown.d.ts",
       "default": "./dist/markdown.js"
+    },
+    "./embedding": {
+      "types": "./dist/embedding.d.ts",
+      "default": "./dist/embedding.js"
     }
   },
   "scripts": {
@@ -29,6 +33,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
     "better-sqlite3": "^12.9.0",
     "gray-matter": "^4.0.3",
     "zod": "^4.4.3"

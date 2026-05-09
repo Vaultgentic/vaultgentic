@@ -15,27 +15,45 @@ export type VaultScanConfig = {
   ignoredPaths?: string[];
 };
 
+export class VaultScannerError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "VaultScannerError";
+  }
+}
+
 export async function scanVaultFiles(
   config: VaultScanConfig,
   options: { includeContentHash?: boolean } = {},
 ): Promise<VaultFileMetadata[]> {
   const vaultPath = path.resolve(config.vaultPath);
-  const includeContentHash = options.includeContentHash ?? false;
-  const ignoredPaths = normalizeIgnoredPaths(
-    vaultPath,
-    config.ignoredPaths ?? [],
-  );
-  const files: VaultFileMetadata[] = [];
+  try {
+    const includeContentHash = options.includeContentHash ?? false;
+    const ignoredPaths = normalizeIgnoredPaths(
+      vaultPath,
+      config.ignoredPaths ?? [],
+    );
+    const files: VaultFileMetadata[] = [];
 
-  await scanDirectory({
-    vaultPath,
-    directoryPath: vaultPath,
-    ignoredPaths,
-    includeContentHash,
-    files,
-  });
+    await scanDirectory({
+      vaultPath,
+      directoryPath: vaultPath,
+      ignoredPaths,
+      includeContentHash,
+      files,
+    });
 
-  return files.sort((left, right) => left.path.localeCompare(right.path));
+    return files.sort((left, right) => left.path.localeCompare(right.path));
+  } catch (error) {
+    if (error instanceof VaultScannerError) {
+      throw error;
+    }
+
+    throw new VaultScannerError(
+      `Failed to scan vault ${vaultPath}: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
 }
 
 async function scanDirectory(options: {
@@ -127,8 +145,18 @@ function resolveScannedRelativePath(
     relativePath.startsWith(`..${path.sep}`) ||
     path.isAbsolute(relativePath)
   ) {
-    throw new Error(`Path must stay inside the vault: ${absolutePath}`);
+    throw new VaultScannerError(
+      `Path must stay inside the vault: ${absolutePath}`,
+    );
   }
 
   return relativePath.split(path.sep).join("/");
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
 }

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { scanVaultFiles } from "./scanner.js";
+import { scanVaultFiles, VaultScannerError } from "./scanner.js";
 
 describe("GIVEN vault file scanning", () => {
   describe("WHEN scanning a vault with nested Markdown notes", () => {
@@ -117,7 +117,7 @@ describe("GIVEN vault file scanning", () => {
 
         await expect(
           scanVaultFiles({ vaultPath, ignoredPaths: ["../outside"] }),
-        ).rejects.toThrow("inside the vault");
+        ).rejects.toBeInstanceOf(VaultScannerError);
       });
     });
   });

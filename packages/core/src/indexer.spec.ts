@@ -8,6 +8,7 @@ import {
   indexVaultFile,
   rebuildSearchIndex,
   searchBm25,
+  SearchIndexerError,
   searchTitles,
   syncSearchIndex,
 } from "./indexer.js";
@@ -34,6 +35,30 @@ describe("GIVEN a BM25 search index", () => {
           chunks: 1,
           fts: 1,
         });
+      });
+    });
+  });
+
+  describe("WHEN an index path escapes the vault", () => {
+    describe("THEN path traversal is rejected by the indexer", () => {
+      it("SHOULD use the localized indexer error type", async () => {
+        const config = await createFixture("indexer-path-traversal");
+
+        await expect(
+          indexVaultFile(config, "../escape.md"),
+        ).rejects.toBeInstanceOf(SearchIndexerError);
+      });
+    });
+  });
+
+  describe("WHEN an indexed file does not exist", () => {
+    describe("THEN filesystem failures are localized", () => {
+      it("SHOULD use the indexer error type", async () => {
+        const config = await createFixture("missing-index-file");
+
+        await expect(
+          indexVaultFile(config, "missing.md"),
+        ).rejects.toBeInstanceOf(SearchIndexerError);
       });
     });
   });
@@ -321,6 +346,14 @@ describe("GIVEN a BM25 search index", () => {
         const results = searchTitles(config, { query: "missing notebook" });
 
         expect(results).toEqual([]);
+      });
+    });
+  });
+
+  describe("WHEN the indexer raises its own errors", () => {
+    describe("THEN they use a localized error type", () => {
+      it("SHOULD expose a service-specific error class", () => {
+        expect(new SearchIndexerError("index failed")).toBeInstanceOf(Error);
       });
     });
   });
