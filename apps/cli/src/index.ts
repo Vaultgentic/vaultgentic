@@ -7,6 +7,7 @@ import {
   readVaultTarget,
   rebuildSearchIndex,
   searchBm25,
+  searchSemantic,
   searchTitles,
   syncSearchIndex,
   vaultgenticCoreName,
@@ -14,6 +15,7 @@ import {
   type DatabaseStatus,
   type ReadVaultTargetResult,
   type RebuildSearchIndexResult,
+  type SemanticSearchResult,
   type TitleSearchResult,
 } from "@vaultgentic/core";
 import { createRequire } from "node:module";
@@ -23,13 +25,20 @@ type KeywordSearchOutput = Bm25SearchResult & {
   matchedBy: ["keyword"];
 };
 
+type SemanticSearchOutput = SemanticSearchResult & {
+  matchedBy: ["vector"];
+};
+
 type TitleSearchOutput = TitleSearchResult & {
   matchedBy: ["title"];
 };
 
-type SearchOutput = KeywordSearchOutput | TitleSearchOutput;
+type SearchOutput =
+  | KeywordSearchOutput
+  | SemanticSearchOutput
+  | TitleSearchOutput;
 
-type SearchMode = "keyword" | "title";
+type SearchMode = "keyword" | "semantic" | "title";
 
 type CreateProgramOptions = {
   confirmIndexRebuild?: () => Promise<boolean>;
@@ -170,7 +179,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         },
       ) => {
         const config = await loadConfig({ configPath: options.config });
-        const output = search(config, {
+        const output = await search(config, {
           query,
           limit: options.limit,
           mode: options.mode,
@@ -231,7 +240,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 }
 
 function parseSearchMode(mode: string): SearchMode {
-  if (mode === "keyword" || mode === "title") {
+  if (mode === "keyword" || mode === "semantic" || mode === "title") {
     return mode;
   }
 
@@ -260,16 +269,26 @@ function toKeywordSearchOutput(result: Bm25SearchResult): KeywordSearchOutput {
   return { ...result, matchedBy: ["keyword"] };
 }
 
+function toSemanticSearchOutput(
+  result: SemanticSearchResult,
+): SemanticSearchOutput {
+  return { ...result, matchedBy: ["vector"] };
+}
+
 function toTitleSearchOutput(result: TitleSearchResult): TitleSearchOutput {
   return { ...result, matchedBy: ["title"] };
 }
 
-function search(
+async function search(
   config: Parameters<typeof searchBm25>[0],
   options: { query: string; limit?: number; mode: SearchMode },
-): SearchOutput[] {
+): Promise<SearchOutput[]> {
   if (options.mode === "title") {
     return searchTitles(config, options).map(toTitleSearchOutput);
+  }
+
+  if (options.mode === "semantic") {
+    return (await searchSemantic(config, options)).map(toSemanticSearchOutput);
   }
 
   return searchBm25(config, options).map(toKeywordSearchOutput);

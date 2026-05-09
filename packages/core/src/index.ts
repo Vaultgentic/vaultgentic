@@ -41,11 +41,13 @@ export {
   rebuildSearchIndex,
   searchBm25,
   SearchIndexerError,
+  searchSemantic,
   searchTitles,
   syncSearchIndex,
   type Bm25SearchResult,
   type IndexFileResult,
   type RebuildSearchIndexResult,
+  type SemanticSearchResult,
   type SyncSearchIndexResult,
   type TitleSearchResult,
 } from "./indexer.js";

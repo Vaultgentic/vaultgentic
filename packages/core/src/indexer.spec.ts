@@ -9,6 +9,7 @@ import {
   rebuildSearchIndex,
   searchBm25,
   SearchIndexerError,
+  searchSemantic,
   searchTitles,
   syncSearchIndex,
 } from "./indexer.js";
@@ -19,6 +20,13 @@ vi.mock("./embedding.js", async (importOriginal) => {
   return {
     ...original,
     embedChunkText: vi.fn(async (text: string) => ({
+      vector: Array.from(
+        { length: original.embeddingModelMetadata.dimension },
+        () => text.length / 100,
+      ),
+      metadata: original.embeddingModelMetadata,
+    })),
+    embedQueryText: vi.fn(async (text: string) => ({
       vector: Array.from(
         { length: original.embeddingModelMetadata.dimension },
         () => text.length / 100,
@@ -353,6 +361,58 @@ describe("GIVEN a BM25 search index", () => {
         expect(searchBm25(config, { query: "needle", limit: -1 })).toHaveLength(
           1,
         );
+      });
+    });
+  });
+
+  describe("WHEN semantic search is queried", () => {
+    describe("THEN nearest vector chunks are returned", () => {
+      it("SHOULD return ranked semantic matches with chunk metadata", async () => {
+        const config = await createFixture("semantic-search");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Alpha\n\nshort idea",
+        );
+        await writeFile(
+          path.join(config.vaultPath, "beta.md"),
+          "# Beta\n\nThis note contains a much longer unrelated paragraph for distance.",
+        );
+        await syncSearchIndex(config);
+
+        const results = await searchSemantic(config, {
+          query: "short idea",
+          limit: 1,
+        });
+
+        expect(results).toMatchObject([
+          {
+            rank: 1,
+            path: "alpha.md",
+            title: "alpha",
+            headingPath: ["Alpha"],
+            snippet: expect.stringContaining("short idea"),
+            score: expect.any(Number),
+            chunkIndex: expect.any(Number),
+          },
+        ]);
+      });
+    });
+  });
+
+  describe("WHEN semantic search sees stale embedding metadata", () => {
+    describe("THEN a clear indexer error is raised", () => {
+      it("SHOULD explain that a full reindex is required", async () => {
+        const config = await createFixture("semantic-stale-metadata");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Alpha\n\nshort idea",
+        );
+        await syncSearchIndex(config);
+        createStaleVectorTable(config.databasePath);
+
+        await expect(
+          searchSemantic(config, { query: "short idea" }),
+        ).rejects.toThrow(/full reindex required/);
       });
     });
   });

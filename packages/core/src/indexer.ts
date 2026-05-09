@@ -19,7 +19,11 @@ import {
   type DatabaseStatus,
   type SearchDatabaseConfig,
 } from "./database.js";
-import { embedChunkText, embeddingModelMetadata } from "./embedding.js";
+import {
+  embedChunkText,
+  embedQueryText,
+  embeddingModelMetadata,
+} from "./embedding.js";
 import type { EmbeddingResult } from "./embedding.js";
 
 export type IndexFileResult = {
@@ -56,6 +60,18 @@ export type Bm25SearchResult = {
   endLine?: number;
 };
 
+export type SemanticSearchResult = {
+  path: string;
+  title: string;
+  headingPath: string[];
+  snippet: string;
+  score: number;
+  rank: number;
+  chunkIndex: number;
+  startLine?: number;
+  endLine?: number;
+};
+
 export type TitleSearchResult = {
   path: string;
   title: string;
@@ -78,6 +94,17 @@ type ExistingNoteRow = {
 };
 
 type SearchRow = {
+  path: string;
+  title: string;
+  headingPath: string | null;
+  snippet: string;
+  score: number;
+  chunkIndex: number;
+  startLine: number | null;
+  endLine: number | null;
+};
+
+type SemanticSearchRow = {
   path: string;
   title: string;
   headingPath: string | null;
@@ -379,6 +406,62 @@ export function searchBm25(
     }));
   } catch (error) {
     throw toSearchIndexerError("Failed to search BM25 index", error);
+  } finally {
+    database?.close();
+  }
+}
+
+export async function searchSemantic(
+  config: SearchDatabaseConfig,
+  options: { query: string; limit?: number },
+): Promise<SemanticSearchResult[]> {
+  const query = options.query.trim();
+  if (query === "") {
+    return [];
+  }
+
+  let database: Database.Database | undefined;
+  try {
+    database = openSearchDatabase(config);
+    ensureVectorTable(database);
+    const embedding = await embedQueryText(query);
+    validateEmbeddingMetadata(embedding);
+    const rows = database
+      .prepare(
+        `
+          SELECT
+            c.path,
+            c.title,
+            c.heading_path AS headingPath,
+            c.chunk_index AS chunkIndex,
+            c.start_line AS startLine,
+            c.end_line AS endLine,
+            c.text AS snippet,
+            chunk_embeddings.distance AS score
+          FROM chunk_embeddings
+          JOIN chunks c ON c.id = chunk_embeddings.rowid
+          WHERE chunk_embeddings.embedding MATCH ? AND k = ?
+          ORDER BY score ASC
+        `,
+      )
+      .all(
+        toVectorBuffer(embedding.vector),
+        normalizeSearchLimit(options.limit),
+      ) as SemanticSearchRow[];
+
+    return rows.map((row, index) => ({
+      path: row.path,
+      title: row.title,
+      headingPath: parseHeadingPath(row.headingPath),
+      snippet: formatSemanticSnippet(row.snippet),
+      score: row.score,
+      rank: index + 1,
+      chunkIndex: row.chunkIndex,
+      startLine: row.startLine ?? undefined,
+      endLine: row.endLine ?? undefined,
+    }));
+  } catch (error) {
+    throw toSearchIndexerError("Failed to search semantic index", error);
   } finally {
     database?.close();
   }
@@ -1044,6 +1127,15 @@ function parseAliases(aliasesJson: string | null): string[] {
   }
 
   return aliases.filter((alias): alias is string => typeof alias === "string");
+}
+
+function formatSemanticSnippet(text: string): string {
+  const compactText = text.replace(/\s+/g, " ").trim();
+  if (compactText.length <= 240) {
+    return compactText;
+  }
+
+  return `${compactText.slice(0, 239)}…`;
 }
 
 function hashContent(content: string): string {

@@ -445,6 +445,60 @@ describe("GIVEN the search command", () => {
     });
   });
 
+  describe("WHEN semantic mode prints JSON output", () => {
+    describe("THEN vector search result fields are returned", () => {
+      it("SHOULD print semantic search results", async () => {
+        const { configPath } = await createSearchFixture("semantic-json");
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "finding notes by meaning",
+              "--mode",
+              "semantic",
+              "--config",
+              configPath,
+              "--limit",
+              "1",
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(JSON.parse(output)).toMatchObject([
+          {
+            rank: 1,
+            path: expect.any(String),
+            title: expect.any(String),
+            headingPath: expect.any(Array),
+            snippet: expect.any(String),
+            matchedBy: ["vector"],
+            chunkIndex: expect.any(Number),
+            score: expect.any(Number),
+          },
+        ]);
+      });
+    });
+  });
+
   describe("WHEN title mode prints human output", () => {
     describe("THEN compact known-note matches are shown", () => {
       it("SHOULD print matched-by and scores without chunk fields", async () => {
