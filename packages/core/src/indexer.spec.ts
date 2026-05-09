@@ -2,14 +2,14 @@ import Database from "better-sqlite3";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "vitest";
 import { initializeSearchDatabase } from "./database.js";
 import { indexVaultFile, searchBm25, syncSearchIndex } from "./indexer.js";
 
 describe("GIVEN a BM25 search index", () => {
   describe("WHEN a single markdown file is indexed", () => {
     describe("THEN note chunks and FTS rows are populated", () => {
-      test("SHOULD index searchable note content", async () => {
+      it("SHOULD index searchable note content", async () => {
         const config = await createFixture("single-file");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
@@ -34,7 +34,7 @@ describe("GIVEN a BM25 search index", () => {
 
   describe("WHEN an unchanged file is indexed again", () => {
     describe("THEN duplicate indexing work is skipped", () => {
-      test("SHOULD return skipped with the existing chunk count", async () => {
+      it("SHOULD return skipped with the existing chunk count", async () => {
         const config = await createFixture("skip-file");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
@@ -60,7 +60,7 @@ describe("GIVEN a BM25 search index", () => {
 
   describe("WHEN an unchanged file is missing FTS rows", () => {
     describe("THEN the keyword index is backfilled", () => {
-      test("SHOULD restore BM25 visibility without duplicating chunks", async () => {
+      it("SHOULD restore BM25 visibility without duplicating chunks", async () => {
         const config = await createFixture("backfill-file");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
@@ -88,7 +88,7 @@ describe("GIVEN a BM25 search index", () => {
 
   describe("WHEN an indexed file changes", () => {
     describe("THEN old FTS rows are replaced", () => {
-      test("SHOULD remove stale searchable terms", async () => {
+      it("SHOULD remove stale searchable terms", async () => {
         const config = await createFixture("reindex-file");
         const filePath = path.join(config.vaultPath, "alpha.md");
         await writeFile(filePath, "# Alpha\n\nThe oldterm is here.");
@@ -105,7 +105,7 @@ describe("GIVEN a BM25 search index", () => {
 
   describe("WHEN the vault is synced after deletion", () => {
     describe("THEN missing files are removed from the index", () => {
-      test("SHOULD delete note chunks and FTS rows", async () => {
+      it("SHOULD delete note chunks and FTS rows", async () => {
         const config = await createFixture("delete-file");
         const filePath = path.join(config.vaultPath, "alpha.md");
         await writeFile(filePath, "# Alpha\n\nDelete me keyword.");
@@ -126,7 +126,7 @@ describe("GIVEN a BM25 search index", () => {
 
   describe("WHEN BM25 search is queried", () => {
     describe("THEN ranked candidates are returned", () => {
-      test("SHOULD return exact keyword matches with snippets", async () => {
+      it("SHOULD return exact keyword matches with snippets", async () => {
         const config = await createFixture("search-file");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
@@ -153,7 +153,7 @@ describe("GIVEN a BM25 search index", () => {
 
   describe("WHEN BM25 search contains punctuation", () => {
     describe("THEN the query is treated as safe keyword text", () => {
-      test("SHOULD not throw FTS syntax errors", async () => {
+      it("SHOULD not throw FTS syntax errors", async () => {
         const config = await createFixture("punctuation-search");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
@@ -168,7 +168,7 @@ describe("GIVEN a BM25 search index", () => {
 
   describe("WHEN BM25 search receives an invalid limit", () => {
     describe("THEN the limit is kept bounded", () => {
-      test("SHOULD not treat negative limits as unlimited", async () => {
+      it("SHOULD not treat negative limits as unlimited", async () => {
         const config = await createFixture("negative-limit-search");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),

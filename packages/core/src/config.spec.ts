@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   defaultIgnoredPaths,
   getDefaultConfigPath,
@@ -12,7 +12,7 @@ import {
 describe("GIVEN Vaultgentic config loading", () => {
   describe("WHEN loading a valid explicit config path", () => {
     describe("THEN paths are resolved and ignored paths are merged", () => {
-      test("SHOULD return a resolved minimal config", async () => {
+      it("SHOULD return a resolved minimal config", async () => {
         const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-config-"));
         await mkdir(path.join(cwd, "vault"));
         const configPath = path.join(cwd, "custom-config.json");
@@ -36,7 +36,7 @@ describe("GIVEN Vaultgentic config loading", () => {
 
   describe("WHEN loading from the default config location", () => {
     describe("THEN the OS config directory is used", () => {
-      test("SHOULD load config.json from XDG_CONFIG_HOME on Linux", async () => {
+      it("SHOULD load config.json from XDG_CONFIG_HOME on Linux", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-default-config-"),
         );
@@ -77,7 +77,7 @@ describe("GIVEN Vaultgentic config loading", () => {
 
   describe("WHEN resolving the default config path", () => {
     describe("THEN platform conventions are used", () => {
-      test("SHOULD use ~/.config/vaultgentic/config.json on Linux", () => {
+      it("SHOULD use ~/.config/vaultgentic/config.json on Linux", () => {
         expect(
           getDefaultConfigPath({
             platform: "linux",
@@ -87,7 +87,7 @@ describe("GIVEN Vaultgentic config loading", () => {
         ).toBe("/home/example/.config/vaultgentic/config.json");
       });
 
-      test("SHOULD use XDG_CONFIG_HOME on Linux when set", () => {
+      it("SHOULD use XDG_CONFIG_HOME on Linux when set", () => {
         expect(
           getDefaultConfigPath({
             platform: "linux",
@@ -97,7 +97,7 @@ describe("GIVEN Vaultgentic config loading", () => {
         ).toBe("/custom/config/vaultgentic/config.json");
       });
 
-      test("SHOULD use APPDATA on Windows when set", () => {
+      it("SHOULD use APPDATA on Windows when set", () => {
         expect(
           getDefaultConfigPath({
             platform: "win32",
@@ -113,7 +113,7 @@ describe("GIVEN Vaultgentic config loading", () => {
 
   describe("WHEN VAULTGENTIC_CONFIG is set", () => {
     describe("THEN it is used when no explicit config path is provided", () => {
-      test("SHOULD load the environment-selected config", async () => {
+      it("SHOULD load the environment-selected config", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-env-config-"),
         );
@@ -142,7 +142,7 @@ describe("GIVEN Vaultgentic config loading", () => {
 
   describe("WHEN the config cannot be read", () => {
     describe("THEN a clear error is thrown", () => {
-      test("SHOULD include the missing config path", async () => {
+      it("SHOULD include the missing config path", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-missing-config-"),
         );
@@ -156,7 +156,7 @@ describe("GIVEN Vaultgentic config loading", () => {
 
   describe("WHEN the config JSON is invalid", () => {
     describe("THEN a clear error is thrown", () => {
-      test("SHOULD explain that JSON parsing failed", async () => {
+      it("SHOULD explain that JSON parsing failed", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-invalid-json-"),
         );
@@ -172,7 +172,7 @@ describe("GIVEN Vaultgentic config loading", () => {
 
   describe("WHEN required config fields are missing", () => {
     describe("THEN clear validation errors are thrown", () => {
-      test("SHOULD require vaultPath", async () => {
+      it("SHOULD require vaultPath", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-missing-vault-"),
         );
@@ -186,7 +186,7 @@ describe("GIVEN Vaultgentic config loading", () => {
         ).rejects.toThrow("vaultPath");
       });
 
-      test("SHOULD require databasePath", async () => {
+      it("SHOULD require databasePath", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-missing-database-"),
         );
@@ -206,19 +206,19 @@ describe("GIVEN Vaultgentic config loading", () => {
 describe("GIVEN vault-relative path resolution", () => {
   describe("WHEN a path stays inside the vault", () => {
     describe("THEN it is returned as a public vault-relative path", () => {
-      test("SHOULD normalize nested paths", () => {
+      it("SHOULD normalize nested paths", () => {
         expect(resolveVaultRelativePath("/tmp/vault", "folder/note.md")).toBe(
           "folder/note.md",
         );
       });
 
-      test("SHOULD normalize backslash separators", () => {
+      it("SHOULD normalize backslash separators", () => {
         expect(resolveVaultRelativePath("/tmp/vault", "folder\\note.md")).toBe(
           "folder/note.md",
         );
       });
 
-      test("SHOULD allow names that start with dots", () => {
+      it("SHOULD allow names that start with dots", () => {
         expect(resolveVaultRelativePath("/tmp/vault", "..note.md")).toBe(
           "..note.md",
         );
@@ -228,13 +228,13 @@ describe("GIVEN vault-relative path resolution", () => {
 
   describe("WHEN a traversal path leaves the vault", () => {
     describe("THEN it is rejected", () => {
-      test("SHOULD reject parent directory traversal", () => {
+      it("SHOULD reject parent directory traversal", () => {
         expect(() =>
           resolveVaultRelativePath("/tmp/vault", "../outside.md"),
         ).toThrow("inside the vault");
       });
 
-      test("SHOULD reject parent directory traversal with backslashes", () => {
+      it("SHOULD reject parent directory traversal with backslashes", () => {
         expect(() =>
           resolveVaultRelativePath("/tmp/vault", "..\\outside.md"),
         ).toThrow("inside the vault");
@@ -244,7 +244,7 @@ describe("GIVEN vault-relative path resolution", () => {
 
   describe("WHEN an absolute path leaves the vault", () => {
     describe("THEN it is rejected", () => {
-      test("SHOULD reject outside absolute paths", () => {
+      it("SHOULD reject outside absolute paths", () => {
         expect(() =>
           resolveVaultRelativePath("/tmp/vault", "/tmp/outside.md"),
         ).toThrow("inside the vault");

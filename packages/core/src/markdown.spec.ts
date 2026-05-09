@@ -1,10 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "vitest";
 import { chunkMarkdownNote, parseMarkdownNote } from "./markdown.js";
 
 describe("GIVEN Markdown note parsing", () => {
   describe("WHEN a note has frontmatter metadata", () => {
     describe("THEN metadata is extracted and normalized", () => {
-      test("SHOULD return title, frontmatter, aliases, and tags", () => {
+      it("SHOULD return title, frontmatter, aliases, and tags", () => {
         const note = parseMarkdownNote({
           path: "folder/source.md",
           content: `---
@@ -40,7 +40,7 @@ Body with #inline-tag and #nested/inline.
 
   describe("WHEN frontmatter uses singular strings", () => {
     describe("THEN aliases and tags are still extracted", () => {
-      test("SHOULD support alias and tag string fields", () => {
+      it("SHOULD support alias and tag string fields", () => {
         const note = parseMarkdownNote({
           path: "strings.md",
           content: `---
@@ -59,7 +59,7 @@ Body
 
   describe("WHEN a note has no frontmatter title", () => {
     describe("THEN the title falls back to the filename", () => {
-      test("SHOULD derive title from basename without extension", () => {
+      it("SHOULD derive title from basename without extension", () => {
         const note = parseMarkdownNote({
           path: "folder/My Note.md",
           content: "# Heading\nBody",
@@ -73,7 +73,7 @@ Body
 
   describe("WHEN a note has headings", () => {
     describe("THEN heading depth, text, and line are returned", () => {
-      test("SHOULD collect ATX headings after frontmatter", () => {
+      it("SHOULD collect ATX headings after frontmatter", () => {
         const note = parseMarkdownNote({
           path: "headings.md",
           content: `---
@@ -91,7 +91,7 @@ Text
         ]);
       });
 
-      test("SHOULD collect headings indented up to three spaces", () => {
+      it("SHOULD collect headings indented up to three spaces", () => {
         const note = parseMarkdownNote({
           path: "indented-heading.md",
           content: "   ## Indented\n",
@@ -102,7 +102,7 @@ Text
         ]);
       });
 
-      test("SHOULD preserve heading text that ends with a hash character", () => {
+      it("SHOULD preserve heading text that ends with a hash character", () => {
         const note = parseMarkdownNote({
           path: "hash-heading.md",
           content: "# C#\n## Trim closing hashes ##\n",
@@ -118,7 +118,7 @@ Text
 
   describe("WHEN a note has wikilinks and embeds", () => {
     describe("THEN outgoing wiki links are collected", () => {
-      test("SHOULD collect raw targets, aliases, and embed state", () => {
+      it("SHOULD collect raw targets, aliases, and embed state", () => {
         const note = parseMarkdownNote({
           path: "links.md",
           content:
@@ -151,7 +151,7 @@ Text
 
   describe("WHEN a note has a fenced code block", () => {
     describe("THEN code remains searchable in the body", () => {
-      test("SHOULD preserve code block content", () => {
+      it("SHOULD preserve code block content", () => {
         const note = parseMarkdownNote({
           path: "code.md",
           content: `# Code
@@ -166,7 +166,7 @@ const searchable = "inside code";
         expect(note.bodyText).toContain("inside code");
       });
 
-      test("SHOULD not extract metadata-like syntax from code fences", () => {
+      it("SHOULD not extract metadata-like syntax from code fences", () => {
         const note = parseMarkdownNote({
           path: "code-metadata.md",
           content: `# Real Heading
@@ -187,7 +187,7 @@ const searchable = "inside code";
         ]);
       });
 
-      test("SHOULD not close fences with trailing info text", () => {
+      it("SHOULD not close fences with trailing info text", () => {
         const note = parseMarkdownNote({
           path: "nested-fence.md",
           content: `~~~md
@@ -206,7 +206,7 @@ const searchable = "inside code";
 
   describe("WHEN a note has inline code", () => {
     describe("THEN inline code remains searchable without metadata extraction", () => {
-      test("SHOULD not extract tags or links from inline code spans", () => {
+      it("SHOULD not extract tags or links from inline code spans", () => {
         const note = parseMarkdownNote({
           path: "inline-code.md",
           content:
@@ -222,7 +222,7 @@ const searchable = "inside code";
 
   describe("WHEN frontmatter is malformed", () => {
     describe("THEN parsing remains lenient for indexing", () => {
-      test("SHOULD keep content searchable and use filename title", () => {
+      it("SHOULD keep content searchable and use filename title", () => {
         const content = `---
 title: [
 ---
@@ -243,7 +243,7 @@ title: [
 
   describe("WHEN a parsed note is chunked", () => {
     describe("THEN chunks preserve compact retrieval context", () => {
-      test("SHOULD include metadata, nested headings, line metadata, and stable hashes", () => {
+      it("SHOULD include metadata, nested headings, line metadata, and stable hashes", () => {
         const note = parseMarkdownNote({
           path: "folder/source.md",
           content: `---
@@ -281,7 +281,7 @@ Child body with #inline-tag.
         expect(chunkMarkdownNote(note)).toEqual(chunks);
       });
 
-      test("SHOULD split long text into smaller agent-readable chunks with overlap", () => {
+      it("SHOULD split long text into smaller agent-readable chunks with overlap", () => {
         const longText = "a".repeat(5000);
         const note = parseMarkdownNote({
           path: "long.md",
@@ -298,7 +298,7 @@ Child body with #inline-tag.
         expect(chunks.map((chunk) => chunk.index)).toEqual([0, 1, 2]);
       });
 
-      test("SHOULD create a metadata chunk for frontmatter-only notes", () => {
+      it("SHOULD create a metadata chunk for frontmatter-only notes", () => {
         const note = parseMarkdownNote({
           path: "metadata.md",
           content: `---
@@ -325,7 +325,7 @@ tags:
         );
       });
 
-      test("SHOULD keep chunks below the max size when metadata is long", () => {
+      it("SHOULD keep chunks below the max size when metadata is long", () => {
         const note = parseMarkdownNote({
           path: `${"deep/".repeat(200)}metadata.md`,
           content: `---

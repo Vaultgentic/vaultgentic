@@ -38,6 +38,21 @@ export type MarkdownHeading = {
   line: number;
 };
 
+type ChunkDraft = Omit<MarkdownChunk, "content_hash" | "index">;
+
+type HeadingSection = {
+  headingPath: string[];
+  lines: string[];
+  startLine: number;
+  endLine: number;
+};
+
+type Paragraph = {
+  text: string;
+  startLine: number;
+  endLine: number;
+};
+
 export function parseMarkdownNote(input: {
   path: string;
   content: string;
@@ -74,15 +89,6 @@ export function chunkMarkdownNote(note: ParsedMarkdownNote): MarkdownChunk[] {
       content_hash: hashChunk(chunk.text),
     }));
 }
-
-type ChunkDraft = Omit<MarkdownChunk, "content_hash" | "index">;
-
-type HeadingSection = {
-  headingPath: string[];
-  lines: string[];
-  startLine: number;
-  endLine: number;
-};
 
 function buildHeadingSections(note: ParsedMarkdownNote): HeadingSection[] {
   const bodyLines = note.bodyText.split(/\r?\n/);
@@ -226,12 +232,6 @@ function splitSection(
 
   return chunks;
 }
-
-type Paragraph = {
-  text: string;
-  startLine: number;
-  endLine: number;
-};
 
 function splitParagraphs(section: HeadingSection): Paragraph[] {
   const paragraphs: Paragraph[] = [];

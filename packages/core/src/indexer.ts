@@ -36,6 +36,31 @@ export type Bm25SearchResult = {
   endLine?: number;
 };
 
+type ExistingNoteRow = {
+  mtimeMs: number;
+  sizeBytes: number;
+  contentHash: string;
+};
+
+type SearchRow = {
+  path: string;
+  title: string;
+  headingPath: string | null;
+  snippet: string;
+  score: number;
+  chunkIndex: number;
+  startLine: number | null;
+  endLine: number | null;
+};
+
+type FtsChunkRow = {
+  id: number;
+  path: string;
+  title: string;
+  headingPath: string | null;
+  text: string;
+};
+
 export function openSearchDatabase(
   config: SearchDatabaseConfig,
 ): Database.Database {
@@ -453,28 +478,3 @@ function normalizeSearchLimit(limit: number | undefined): number {
 
   return Math.min(100, Math.max(1, Math.trunc(limit)));
 }
-
-type ExistingNoteRow = {
-  mtimeMs: number;
-  sizeBytes: number;
-  contentHash: string;
-};
-
-type SearchRow = {
-  path: string;
-  title: string;
-  headingPath: string | null;
-  snippet: string;
-  score: number;
-  chunkIndex: number;
-  startLine: number | null;
-  endLine: number | null;
-};
-
-type FtsChunkRow = {
-  id: number;
-  path: string;
-  title: string;
-  headingPath: string | null;
-  text: string;
-};

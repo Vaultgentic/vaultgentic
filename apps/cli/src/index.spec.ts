@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,15 +8,15 @@ import { createProgram, packageVersion } from "./index.js";
 describe("GIVEN the CLI package", () => {
   describe("WHEN creating the Commander program", () => {
     describe("THEN command metadata is configured", () => {
-      test("SHOULD use the vaultgentic command name", () => {
+      it("SHOULD use the vaultgentic command name", () => {
         expect(createProgram().name()).toBe("vaultgentic");
       });
 
-      test("SHOULD report the package version", () => {
+      it("SHOULD report the package version", () => {
         expect(createProgram().version()).toBe(packageVersion);
       });
 
-      test("SHOULD include the index status command", () => {
+      it("SHOULD include the index status command", () => {
         const indexCommand = createProgram().commands.find(
           (command) => command.name() === "index",
         );
@@ -26,13 +26,13 @@ describe("GIVEN the CLI package", () => {
         );
       });
 
-      test("SHOULD include the search command", () => {
+      it("SHOULD include the search command", () => {
         expect(
           createProgram().commands.map((command) => command.name()),
         ).toEqual(expect.arrayContaining(["search"]));
       });
 
-      test("SHOULD include the read command", () => {
+      it("SHOULD include the read command", () => {
         expect(
           createProgram().commands.map((command) => command.name()),
         ).toEqual(expect.arrayContaining(["read"]));
@@ -44,7 +44,7 @@ describe("GIVEN the CLI package", () => {
 describe("GIVEN the index file command", () => {
   describe("WHEN JSON output is requested", () => {
     describe("THEN the requested note is indexed", () => {
-      test("SHOULD print the file indexing result", async () => {
+      it("SHOULD print the file indexing result", async () => {
         const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-cli-file-"));
         const vaultPath = path.join(cwd, "vault");
         const databasePath = path.join(cwd, ".vaultgentic", "index.sqlite");
@@ -95,7 +95,7 @@ describe("GIVEN the index file command", () => {
 describe("GIVEN the index sync command", () => {
   describe("WHEN JSON output is requested", () => {
     describe("THEN changed vault notes are indexed", () => {
-      test("SHOULD print sync counts", async () => {
+      it("SHOULD print sync counts", async () => {
         const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-cli-sync-"));
         const vaultPath = path.join(cwd, "vault");
         const databasePath = path.join(cwd, ".vaultgentic", "index.sqlite");
@@ -145,7 +145,7 @@ describe("GIVEN the index sync command", () => {
 describe("GIVEN the index status command", () => {
   describe("WHEN JSON output is requested", () => {
     describe("THEN the configured database is initialized and reported", () => {
-      test("SHOULD print database status", async () => {
+      it("SHOULD print database status", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-cli-status-"),
         );
@@ -200,7 +200,7 @@ describe("GIVEN the index status command", () => {
 describe("GIVEN the search command", () => {
   describe("WHEN keyword mode prints human output", () => {
     describe("THEN compact ranked matches are shown", () => {
-      test("SHOULD print title, path, heading, snippet, matched-by, and scores", async () => {
+      it("SHOULD print title, path, heading, snippet, matched-by, and scores", async () => {
         const { configPath } = await createSearchFixture("human");
         await captureConsoleLog(async () => {
           await createProgram().parseAsync(
@@ -246,7 +246,7 @@ describe("GIVEN the search command", () => {
 
   describe("WHEN keyword mode prints JSON output", () => {
     describe("THEN technical search result fields are returned", () => {
-      test("SHOULD print keyword search results", async () => {
+      it("SHOULD print keyword search results", async () => {
         const { configPath } = await createSearchFixture("json");
         await captureConsoleLog(async () => {
           await createProgram().parseAsync(
@@ -299,7 +299,7 @@ describe("GIVEN the search command", () => {
 
   describe("WHEN an unsupported mode is requested", () => {
     describe("THEN a clear invalid-option error is raised", () => {
-      test("SHOULD reject non-keyword search modes", async () => {
+      it("SHOULD reject non-keyword search modes", async () => {
         const errors: string[] = [];
         const program = createProgram()
           .exitOverride()
@@ -324,7 +324,7 @@ describe("GIVEN the search command", () => {
 describe("GIVEN the read command", () => {
   describe("WHEN a vault-relative note path is requested", () => {
     describe("THEN note content is printed", () => {
-      test("SHOULD print the note as JSON", async () => {
+      it("SHOULD print the note as JSON", async () => {
         const { configPath } = await createSearchFixture("read-note");
 
         const output = await captureConsoleLog(async () => {
@@ -354,7 +354,7 @@ describe("GIVEN the read command", () => {
 
   describe("WHEN a numeric chunk id is requested", () => {
     describe("THEN indexed chunk content is printed", () => {
-      test("SHOULD print the chunk as JSON", async () => {
+      it("SHOULD print the chunk as JSON", async () => {
         const { configPath, databasePath, vaultPath } =
           await createSearchFixture("read-chunk");
         await captureConsoleLog(async () => {
@@ -408,7 +408,7 @@ describe("GIVEN the read command", () => {
 
   describe("WHEN maximum characters are requested", () => {
     describe("THEN content is truncated", () => {
-      test("SHOULD print truncation details", async () => {
+      it("SHOULD print truncation details", async () => {
         const { configPath } = await createSearchFixture("read-truncated");
 
         const output = await captureConsoleLog(async () => {
@@ -439,7 +439,7 @@ describe("GIVEN the read command", () => {
 
   describe("WHEN an ambiguous target is requested", () => {
     describe("THEN a clear read error is raised", () => {
-      test("SHOULD reject non-md non-numeric targets", async () => {
+      it("SHOULD reject non-md non-numeric targets", async () => {
         const { configPath } = await createSearchFixture("read-invalid");
 
         await expect(

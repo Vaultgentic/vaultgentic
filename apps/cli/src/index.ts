@@ -14,6 +14,10 @@ import {
 } from "@vaultgentic/core";
 import { createRequire } from "node:module";
 
+type KeywordSearchOutput = Bm25SearchResult & {
+  matchedBy: ["keyword"];
+};
+
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version: string };
 
@@ -171,10 +175,6 @@ export function createProgram(): Command {
 
   return program;
 }
-
-type KeywordSearchOutput = Bm25SearchResult & {
-  matchedBy: ["keyword"];
-};
 
 function parseSearchMode(mode: string): "keyword" {
   if (mode === "keyword") {

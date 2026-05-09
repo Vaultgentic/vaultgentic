@@ -49,6 +49,25 @@ export type NoteMetadata = {
   indexedAt: number;
 };
 
+type NoteMetadataRow = {
+  path: string;
+  title: string;
+  aliasesJson: string | null;
+  tagsJson: string | null;
+  frontmatterJson: string | null;
+  linksJson: string | null;
+  indexedAt: number;
+};
+
+type ChunkReadRow = NoteMetadataRow & {
+  id: number;
+  headingPath: string | null;
+  chunkIndex: number;
+  startLine: number | null;
+  endLine: number | null;
+  text: string;
+};
+
 export async function readVaultTarget(
   config: SearchDatabaseConfig,
   options: ReadVaultTargetOptions,
@@ -320,22 +339,3 @@ function parseHeadingPath(headingPath: string | null): string[] {
 
   return headingPath.split(" / ");
 }
-
-type NoteMetadataRow = {
-  path: string;
-  title: string;
-  aliasesJson: string | null;
-  tagsJson: string | null;
-  frontmatterJson: string | null;
-  linksJson: string | null;
-  indexedAt: number;
-};
-
-type ChunkReadRow = NoteMetadataRow & {
-  id: number;
-  headingPath: string | null;
-  chunkIndex: number;
-  startLine: number | null;
-  endLine: number | null;
-  text: string;
-};

@@ -2,7 +2,7 @@ import Database from "better-sqlite3";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "vitest";
 import { initializeSearchDatabase } from "./database.js";
 import { indexVaultFile } from "./indexer.js";
 import { readVaultTarget } from "./read.js";
@@ -10,7 +10,7 @@ import { readVaultTarget } from "./read.js";
 describe("GIVEN a vault read service", () => {
   describe("WHEN a vault-relative note path is requested", () => {
     describe("THEN note content is read from the vault", () => {
-      test("SHOULD return the markdown note content", async () => {
+      it("SHOULD return the markdown note content", async () => {
         const config = await createFixture("note-path");
         const content = "# Alpha\n\nReadable note text.";
         await writeFile(path.join(config.vaultPath, "alpha.md"), content);
@@ -30,7 +30,7 @@ describe("GIVEN a vault read service", () => {
 
   describe("WHEN a numeric chunk id is requested", () => {
     describe("THEN indexed chunk text is read from the database", () => {
-      test("SHOULD return chunk content and note context", async () => {
+      it("SHOULD return chunk content and note context", async () => {
         const config = await createFixture("chunk-id");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
@@ -66,7 +66,7 @@ describe("GIVEN a vault read service", () => {
 
   describe("WHEN a max character limit is provided", () => {
     describe("THEN readable text is truncated", () => {
-      test("SHOULD include truncation metadata", async () => {
+      it("SHOULD include truncation metadata", async () => {
         const config = await createFixture("truncate");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "abcdef");
 
@@ -87,7 +87,7 @@ describe("GIVEN a vault read service", () => {
 
   describe("WHEN indexed metadata is requested", () => {
     describe("THEN available note metadata is included", () => {
-      test("SHOULD return title, aliases, tags, frontmatter, and links", async () => {
+      it("SHOULD return title, aliases, tags, frontmatter, and links", async () => {
         const config = await createFixture("metadata");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
@@ -119,7 +119,7 @@ describe("GIVEN a vault read service", () => {
 
   describe("WHEN an ambiguous string target is requested", () => {
     describe("THEN a clear target error is raised", () => {
-      test("SHOULD reject non-md non-numeric targets", async () => {
+      it("SHOULD reject non-md non-numeric targets", async () => {
         const config = await createFixture("ambiguous");
 
         await expect(
@@ -133,7 +133,7 @@ describe("GIVEN a vault read service", () => {
 
   describe("WHEN a path escapes the vault", () => {
     describe("THEN path traversal is rejected", () => {
-      test("SHOULD reject outside-vault paths", async () => {
+      it("SHOULD reject outside-vault paths", async () => {
         const config = await createFixture("safe-path");
 
         await expect(
@@ -141,7 +141,7 @@ describe("GIVEN a vault read service", () => {
         ).rejects.toThrow("Path must stay inside the vault");
       });
 
-      test("SHOULD reject symlinks to outside-vault files", async () => {
+      it("SHOULD reject symlinks to outside-vault files", async () => {
         const config = await createFixture("safe-symlink");
         const outsidePath = path.join(
           path.dirname(config.vaultPath),

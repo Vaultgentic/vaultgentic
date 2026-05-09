@@ -2,13 +2,13 @@ import { createHash } from "node:crypto";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "vitest";
 import { scanVaultFiles } from "./scanner.js";
 
 describe("GIVEN vault file scanning", () => {
   describe("WHEN scanning a vault with nested Markdown notes", () => {
     describe("THEN only vault-relative Markdown paths are returned", () => {
-      test("SHOULD return sorted Markdown metadata", async () => {
+      it("SHOULD return sorted Markdown metadata", async () => {
         const vaultPath = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-scan-"),
         );
@@ -39,8 +39,7 @@ describe("GIVEN vault file scanning", () => {
 
   describe("WHEN a POSIX filename contains a backslash", () => {
     describe("THEN the backslash is preserved as part of the filename", () => {
-      const testBackslashFilename =
-        process.platform === "win32" ? test.skip : test;
+      const testBackslashFilename = process.platform === "win32" ? it.skip : it;
 
       testBackslashFilename(
         "SHOULD not treat it as a path separator",
@@ -60,7 +59,7 @@ describe("GIVEN vault file scanning", () => {
 
   describe("WHEN configured and default ignored paths are present", () => {
     describe("THEN ignored files and descendants are skipped", () => {
-      test("SHOULD honor exact ignored paths and ignored directories", async () => {
+      it("SHOULD honor exact ignored paths and ignored directories", async () => {
         const vaultPath = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-scan-ignored-"),
         );
@@ -87,7 +86,7 @@ describe("GIVEN vault file scanning", () => {
   describe("WHEN a POSIX ignored filename contains a backslash", () => {
     describe("THEN the matching file is skipped", () => {
       const testBackslashIgnoredPath =
-        process.platform === "win32" ? test.skip : test;
+        process.platform === "win32" ? it.skip : it;
 
       testBackslashIgnoredPath(
         "SHOULD preserve literal backslashes for ignored paths",
@@ -111,7 +110,7 @@ describe("GIVEN vault file scanning", () => {
 
   describe("WHEN an ignored path leaves the vault", () => {
     describe("THEN scanning is rejected", () => {
-      test("SHOULD guard traversal paths", async () => {
+      it("SHOULD guard traversal paths", async () => {
         const vaultPath = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-scan-traversal-"),
         );
@@ -125,7 +124,7 @@ describe("GIVEN vault file scanning", () => {
 
   describe("WHEN content hashes are requested", () => {
     describe("THEN SHA-256 hashes are returned", () => {
-      test("SHOULD include content_hash only when requested", async () => {
+      it("SHOULD include content_hash only when requested", async () => {
         const vaultPath = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-scan-hash-"),
         );

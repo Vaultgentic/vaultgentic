@@ -2,13 +2,13 @@ import Database from "better-sqlite3";
 import { mkdtemp, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "vitest";
 import { initializeSearchDatabase, schemaVersion } from "./database.js";
 
 describe("GIVEN SQLite search database initialization", () => {
   describe("WHEN initializing a new database", () => {
     describe("THEN schema and metadata are created", () => {
-      test("SHOULD create the expected tables and status", async () => {
+      it("SHOULD create the expected tables and status", async () => {
         const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-db-"));
         const vaultPath = path.join(cwd, "vault");
         const databasePath = path.join(cwd, ".vaultgentic", "index.sqlite");
@@ -55,7 +55,7 @@ describe("GIVEN SQLite search database initialization", () => {
 
   describe("WHEN initializing an existing database", () => {
     describe("THEN the operation is idempotent", () => {
-      test("SHOULD preserve existing metadata and counts", async () => {
+      it("SHOULD preserve existing metadata and counts", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-db-existing-"),
         );
@@ -78,7 +78,7 @@ describe("GIVEN SQLite search database initialization", () => {
 
   describe("WHEN an existing database belongs to another vault", () => {
     describe("THEN initialization is rejected", () => {
-      test("SHOULD fail before reporting healthy status", async () => {
+      it("SHOULD fail before reporting healthy status", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-db-mismatched-vault-"),
         );
@@ -102,7 +102,7 @@ describe("GIVEN SQLite search database initialization", () => {
 
   describe("WHEN an existing database has an unsupported schema version", () => {
     describe("THEN initialization is rejected", () => {
-      test("SHOULD fail before reporting healthy status", async () => {
+      it("SHOULD fail before reporting healthy status", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-db-bad-schema-"),
         );
@@ -130,7 +130,7 @@ describe("GIVEN SQLite search database initialization", () => {
 
   describe("WHEN an existing SQLite database is not a Vaultgentic database", () => {
     describe("THEN initialization is rejected", () => {
-      test("SHOULD not stamp missing metadata onto the database", async () => {
+      it("SHOULD not stamp missing metadata onto the database", async () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-db-foreign-"),
         );
