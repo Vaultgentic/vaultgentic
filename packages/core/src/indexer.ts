@@ -148,14 +148,14 @@ type TitleSearchRow = {
 
 type FtsChunkRow = {
   id: number;
-  path: string;
-  title: string;
   headingPath: string | null;
   text: string;
 };
 
 type VectorChunkRow = {
   id: number;
+  title: string;
+  headingPath: string | null;
   text: string;
 };
 
@@ -709,7 +709,7 @@ async function prepareFileContent(
   const chunks = await Promise.all(
     chunkMarkdownNote(note).map(async (chunk) => ({
       chunk,
-      embedding: await embedChunkText(chunk.text),
+      embedding: await embedChunkText(buildChunkSearchContext(chunk)),
     })),
   );
 
@@ -789,8 +789,8 @@ function writePreparedFile(
     );
     insertFts.run(
       Number(chunkResult.lastInsertRowid),
-      chunk.path,
-      chunk.title,
+      "",
+      "",
       headingPath,
       chunk.text,
     );
@@ -1043,7 +1043,7 @@ async function prepareExistingChunkEmbeddings(
   const chunks = database
     .prepare(
       `
-        SELECT id, text
+        SELECT id, title, heading_path AS headingPath, text
         FROM chunks
         WHERE path = ?
         ORDER BY chunk_index
@@ -1054,9 +1054,31 @@ async function prepareExistingChunkEmbeddings(
   return await Promise.all(
     chunks.map(async (chunk) => ({
       chunkId: BigInt(chunk.id),
-      embedding: await embedChunkText(chunk.text),
+      embedding: await embedChunkText(
+        buildChunkSearchContext({
+          title: chunk.title,
+          headingPath: parseHeadingPath(chunk.headingPath),
+          text: chunk.text,
+        }),
+      ),
     })),
   );
+}
+
+function buildChunkSearchContext(chunk: {
+  title: string;
+  headingPath: string[];
+  text: string;
+}): string {
+  return [
+    `Title: ${chunk.title}`,
+    chunk.headingPath.length > 0
+      ? `Headings: ${chunk.headingPath.join(" > ")}`
+      : undefined,
+    chunk.text,
+  ]
+    .filter((line) => line !== undefined && line !== "")
+    .join("\n\n");
 }
 
 function writeChunkEmbeddings(
@@ -1179,7 +1201,7 @@ function backfillFtsRows(
   const chunks = database
     .prepare(
       `
-        SELECT id, path, title, heading_path AS headingPath, text
+        SELECT id, heading_path AS headingPath, text
         FROM chunks
         WHERE path = ?
         ORDER BY chunk_index
@@ -1197,13 +1219,7 @@ function backfillFtsRows(
   database.transaction(() => {
     for (const chunk of chunks) {
       deleteFts.run(chunk.id);
-      insertFts.run(
-        chunk.id,
-        chunk.path,
-        chunk.title,
-        chunk.headingPath,
-        chunk.text,
-      );
+      insertFts.run(chunk.id, "", "", chunk.headingPath, chunk.text);
     }
   })();
 }

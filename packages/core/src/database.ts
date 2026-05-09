@@ -6,7 +6,7 @@ import { embeddingModelMetadata } from "./embedding.js";
 import { VaultgenticError } from "./errors.js";
 
 export const schemaVersion = 1;
-export const chunkerVersion = "1";
+export const chunkerVersion = "2";
 
 export class SearchDatabaseError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {

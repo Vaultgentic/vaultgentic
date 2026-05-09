@@ -75,6 +75,12 @@ describe("GIVEN a vault read service", () => {
             tags: ["read-test"],
           },
         });
+        expect(result.type === "chunk" ? result.text : "").toBe(
+          "## Details\n\nChunk text appears here.",
+        );
+        expect(result.type === "chunk" ? result.text : "").not.toContain(
+          "Title: Alpha",
+        );
       });
     });
   });

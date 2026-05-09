@@ -242,8 +242,8 @@ title: [
   });
 
   describe("WHEN a parsed note is chunked", () => {
-    describe("THEN chunks preserve compact retrieval context", () => {
-      it("SHOULD include metadata, nested headings, line metadata, and stable hashes", () => {
+    describe("THEN chunks preserve raw markdown content", () => {
+      it("SHOULD include raw text, nested headings, line metadata, and stable hashes", () => {
         const note = parseMarkdownNote({
           path: "folder/source.md",
           content: `---
@@ -272,11 +272,9 @@ Child body with #inline-tag.
           start_line: 9,
           end_line: 10,
         });
-        expect(childChunk?.text).toContain("Title: Source Title");
-        expect(childChunk?.text).toContain("Path: folder/source.md");
-        expect(childChunk?.text).toContain("Headings: Parent > Child");
-        expect(childChunk?.text).toContain("Tags: agent/search, inline-tag");
-        expect(childChunk?.text).toContain("Child body with #inline-tag.");
+        expect(childChunk?.text).toBe("## Child\nChild body with #inline-tag.");
+        expect(childChunk?.text).not.toContain("Title: Source Title");
+        expect(childChunk?.text).not.toContain("Path: folder/source.md");
         expect(childChunk?.content_hash).toMatch(/^[a-f0-9]{64}$/);
         expect(chunkMarkdownNote(note)).toEqual(chunks);
       });
@@ -289,16 +287,16 @@ Child body with #inline-tag.
         });
 
         const chunks = chunkMarkdownNote(note);
-        const firstBody = readChunkBody(chunks[0].text);
-        const secondBody = readChunkBody(chunks[1].text);
 
         expect(chunks.length).toBeGreaterThan(1);
         expect(chunks.every((chunk) => chunk.text.length <= 2400)).toBe(true);
-        expect(secondBody.startsWith(firstBody.slice(-220))).toBe(true);
+        expect(chunks[1].text.startsWith(chunks[0].text.slice(-220))).toBe(
+          true,
+        );
         expect(chunks.map((chunk) => chunk.index)).toEqual([0, 1, 2]);
       });
 
-      it("SHOULD create a metadata chunk for frontmatter-only notes", () => {
+      it("SHOULD NOT create a metadata chunk for frontmatter-only notes", () => {
         const note = parseMarkdownNote({
           path: "metadata.md",
           content: `---
@@ -311,40 +309,19 @@ tags:
 
         const chunks = chunkMarkdownNote(note);
 
-        expect(chunks).toHaveLength(1);
-        expect(chunks[0]).toMatchObject({
-          path: "metadata.md",
-          title: "Metadata Only",
-          headingPath: [],
-          index: 0,
-          start_line: 6,
-          end_line: 6,
-        });
-        expect(chunks[0].text).toBe(
-          "Title: Metadata Only\nPath: metadata.md\nTags: context",
-        );
+        expect(chunks).toEqual([]);
       });
 
-      it("SHOULD keep chunks below the max size when metadata is long", () => {
+      it("SHOULD NOT create a chunk for heading-only sections", () => {
         const note = parseMarkdownNote({
-          path: `${"deep/".repeat(200)}metadata.md`,
-          content: `---
-title: ${"Long Title ".repeat(500)}
-tags:
-  - ${"long-tag".repeat(500)}
----
-`,
+          path: "outline.md",
+          content: "# Parent\n\n## Child\n",
         });
 
         const chunks = chunkMarkdownNote(note);
 
-        expect(chunks).toHaveLength(1);
-        expect(chunks[0].text.length).toBeLessThanOrEqual(2400);
+        expect(chunks).toEqual([]);
       });
     });
   });
 });
-
-function readChunkBody(text: string): string {
-  return text.split("\n\n").slice(1).join("\n\n");
-}

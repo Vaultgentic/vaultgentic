@@ -38,7 +38,7 @@ describe("GIVEN SQLite search database initialization", () => {
             modelId: "Xenova/all-MiniLM-L6-v2",
             dimension: 384,
             normalized: true,
-            chunkerVersion: "1",
+            chunkerVersion: "2",
           },
         });
 
@@ -60,7 +60,7 @@ describe("GIVEN SQLite search database initialization", () => {
             embedding_model_id: "Xenova/all-MiniLM-L6-v2",
             embedding_dimension: "384",
             embedding_normalized: "true",
-            chunker_version: "1",
+            chunker_version: "2",
           });
         } finally {
           database.close();

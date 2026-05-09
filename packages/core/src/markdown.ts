@@ -78,7 +78,6 @@ export function parseMarkdownNote(input: {
 const targetChunkLength = 1600;
 const maxChunkLength = 2400;
 const overlapLength = 220;
-const maxContextValueLength = 320;
 
 export function chunkMarkdownNote(note: ParsedMarkdownNote): MarkdownChunk[] {
   return buildHeadingSections(note)
@@ -104,7 +103,7 @@ function buildHeadingSections(note: ParsedMarkdownNote): HeadingSection[] {
     const heading = headingsByLine.get(lineNumber);
 
     if (heading !== undefined) {
-      if (current !== undefined && hasMeaningfulText(current.lines)) {
+      if (current !== undefined && hasMeaningfulSectionText(current)) {
         sections.push(current);
       }
 
@@ -138,29 +137,19 @@ function buildHeadingSections(note: ParsedMarkdownNote): HeadingSection[] {
     current.endLine = lineNumber;
   }
 
-  if (current !== undefined && hasMeaningfulText(current.lines)) {
+  if (current !== undefined && hasMeaningfulSectionText(current)) {
     sections.push(current);
   }
 
-  return sections.length === 0
-    ? [
-        {
-          headingPath: [],
-          lines: [],
-          startLine: note.bodyStartLine,
-          endLine: note.bodyStartLine,
-        },
-      ]
-    : sections;
+  return sections;
 }
 
 function splitSection(
   note: ParsedMarkdownNote,
   section: HeadingSection,
 ): ChunkDraft[] {
-  const context = buildChunkContext(note, section.headingPath);
-  const maxBodyLength = Math.max(1, maxChunkLength - context.length - 2);
-  const targetBodyLength = Math.max(1, targetChunkLength - context.length - 2);
+  const maxBodyLength = maxChunkLength;
+  const targetBodyLength = targetChunkLength;
   const paragraphs = splitParagraphs(section);
   const chunks: ChunkDraft[] = [];
   let currentText = "";
@@ -168,16 +157,7 @@ function splitSection(
   let currentEndLine = section.startLine;
 
   if (paragraphs.length === 0) {
-    return [
-      {
-        path: note.path,
-        title: note.title,
-        headingPath: section.headingPath,
-        text: context,
-        start_line: section.startLine,
-        end_line: section.endLine,
-      },
-    ];
+    return [];
   }
 
   for (const paragraph of paragraphs) {
@@ -195,7 +175,7 @@ function splitSection(
           path: note.path,
           title: note.title,
           headingPath: section.headingPath,
-          text: joinChunkText(context, currentText),
+          text: currentText,
           start_line: currentStartLine,
           end_line: currentEndLine,
         });
@@ -224,7 +204,7 @@ function splitSection(
       path: note.path,
       title: note.title,
       headingPath: section.headingPath,
-      text: joinChunkText(context, currentText),
+      text: currentText,
       start_line: currentStartLine,
       end_line: currentEndLine,
     });
@@ -355,34 +335,6 @@ function splitLongText(text: string, maxLength: number): string[] {
   return chunks.filter((chunk) => chunk !== "");
 }
 
-function buildChunkContext(
-  note: ParsedMarkdownNote,
-  headingPath: string[],
-): string {
-  return [
-    `Title: ${compactContextValue(note.title)}`,
-    `Path: ${compactContextValue(note.path)}`,
-    headingPath.length > 0
-      ? `Headings: ${compactContextValue(headingPath.join(" > "))}`
-      : undefined,
-    note.tags.length > 0
-      ? `Tags: ${compactContextValue(note.tags.join(", "))}`
-      : undefined,
-  ]
-    .filter((line) => line !== undefined)
-    .join("\n");
-}
-
-function compactContextValue(value: string): string {
-  return value.length <= maxContextValueLength
-    ? value
-    : `${value.slice(0, maxContextValueLength - 1)}…`;
-}
-
-function joinChunkText(context: string, body: string): string {
-  return `${context}\n\n${body}`.trim();
-}
-
 function makeOverlap(text: string): string {
   if (text.length <= overlapLength) {
     return text;
@@ -397,6 +349,16 @@ function hashChunk(text: string): string {
 
 function hasMeaningfulText(lines: string[]): boolean {
   return lines.some((line) => line.trim() !== "");
+}
+
+function hasMeaningfulSectionText(section: HeadingSection): boolean {
+  return section.lines.some(
+    (line) => line.trim() !== "" && !isMarkdownHeadingLine(line),
+  );
+}
+
+function isMarkdownHeadingLine(line: string): boolean {
+  return /^ {0,3}#{1,6}\s+.+?\s*$/.test(line);
 }
 
 function parseFrontmatter(content: string): {

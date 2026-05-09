@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { initializeSearchDatabase, loadSqliteVec } from "./database.js";
+import { embedChunkText } from "./embedding.js";
 import {
   indexVaultFile,
   rebuildSearchIndex,
@@ -59,6 +60,9 @@ describe("GIVEN a BM25 search index", () => {
           fts: 1,
           vectors: 1,
         });
+        expect(readChunkText(config.databasePath, "alpha.md")).toBe(
+          "# Alpha\n\nImportant keyword zebra lives here.",
+        );
       });
     });
   });
@@ -120,7 +124,7 @@ describe("GIVEN a BM25 search index", () => {
         const config = await createFixture("backfill-file");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
-          "# Alpha\n\nThe backfill keyword appears here.",
+          "---\ntitle: Backfill Title\n---\n\n# Alpha\n\nThe backfill keyword appears here.",
         );
         await indexVaultFile(config, "alpha.md");
         deleteFtsRows(config.databasePath);
@@ -133,6 +137,7 @@ describe("GIVEN a BM25 search index", () => {
           chunkCount: 1,
         });
         expect(searchBm25(config, { query: "backfill" })).toHaveLength(1);
+        expect(searchBm25(config, { query: "Backfill Title" })).toEqual([]);
         expect(readCounts(config.databasePath)).toEqual({
           notes: 1,
           chunks: 1,
@@ -353,6 +358,40 @@ describe("GIVEN a BM25 search index", () => {
         expect(results[0]?.snippet).toContain("needle");
         expect(results[0]?.score).toEqual(expect.any(Number));
       });
+
+      it("SHOULD NOT return chunk results for title-only matches", async () => {
+        const config = await createFixture("search-title-only");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: Backup Flow\n---\n\n# Details\n\nThe restore process is documented here.",
+        );
+        await syncSearchIndex(config);
+
+        expect(searchBm25(config, { query: "Backup Flow" })).toEqual([]);
+        expect(searchTitles(config, { query: "Backup Flow" })).toMatchObject([
+          { path: "alpha.md", title: "Backup Flow" },
+        ]);
+      });
+
+      it("SHOULD return chunk results for heading matches with readable snippets", async () => {
+        const config = await createFixture("search-heading");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Backup Flow\n\nThe restore process is documented here.",
+        );
+        await syncSearchIndex(config);
+
+        const results = searchBm25(config, { query: "Backup Flow" });
+
+        expect(results).toMatchObject([
+          {
+            path: "alpha.md",
+            headingPath: ["Backup Flow"],
+            snippet: expect.any(String),
+          },
+        ]);
+        expect(results[0]?.snippet).not.toContain("Title:");
+      });
     });
   });
 
@@ -422,6 +461,25 @@ describe("GIVEN a BM25 search index", () => {
             chunkIndex: expect.any(Number),
           },
         ]);
+        expect(results[0]?.snippet).not.toContain("Title:");
+      });
+
+      it("SHOULD embed metadata-aware context without storing it as chunk text", async () => {
+        const config = await createFixture("semantic-context");
+        vi.mocked(embedChunkText).mockClear();
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: Semantic Alpha\n---\n\n# Parent\n\n## Child\n\nshort idea",
+        );
+
+        await indexVaultFile(config, "alpha.md");
+
+        expect(vi.mocked(embedChunkText)).toHaveBeenCalledWith(
+          "Title: Semantic Alpha\n\nHeadings: Parent > Child\n\n## Child\n\nshort idea",
+        );
+        expect(readChunkText(config.databasePath, "alpha.md")).toBe(
+          "## Child\n\nshort idea",
+        );
       });
     });
   });
@@ -575,6 +633,18 @@ function readCount(database: Database.Database, tableName: string): number {
     .prepare(`SELECT COUNT(*) AS count FROM ${tableName}`)
     .get() as { count: number };
   return row.count;
+}
+
+function readChunkText(databasePath: string, indexedPath: string): string {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    const row = database
+      .prepare("SELECT text FROM chunks WHERE path = ? ORDER BY id LIMIT 1")
+      .get(indexedPath) as { text: string };
+    return row.text;
+  } finally {
+    database.close();
+  }
 }
 
 function deleteFtsRows(databasePath: string): void {
