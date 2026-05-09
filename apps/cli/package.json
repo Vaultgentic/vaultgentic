@@ -1,8 +1,19 @@
 {
   "name": "@vaultgentic/cli",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vaultgentic/vaultgentic.git",
+    "directory": "apps/cli"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "bin": {
     "vaultgentic": "dist/index.js"
   },
