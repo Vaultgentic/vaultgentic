@@ -18,8 +18,10 @@ import {
   type SemanticSearchResult,
   type TitleSearchResult,
 } from "@vaultgentic/core";
+import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline/promises";
+import { fileURLToPath } from "node:url";
 
 type KeywordSearchOutput = Bm25SearchResult & {
   matchedBy: ["keyword"];
@@ -77,6 +79,14 @@ const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version: string };
 
 export const packageVersion = packageJson.version;
+
+export function isMainModule(moduleUrl: string, argvPath: string | undefined) {
+  if (argvPath === undefined) {
+    return false;
+  }
+
+  return realpathSync(fileURLToPath(moduleUrl)) === realpathSync(argvPath);
+}
 
 export function createProgram(options: CreateProgramOptions = {}): Command {
   const confirmIndexRebuild = options.confirmIndexRebuild ?? promptIndexRebuild;
@@ -588,6 +598,6 @@ async function promptIndexRebuild(): Promise<boolean> {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   createProgram().parse();
 }

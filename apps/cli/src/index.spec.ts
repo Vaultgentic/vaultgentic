@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { openSearchDatabase } from "@vaultgentic/core";
-import { createProgram, packageVersion } from "./index.js";
+import { createProgram, isMainModule, packageVersion } from "./index.js";
 
 describe("GIVEN the CLI package", () => {
   describe("WHEN creating the Commander program", () => {
@@ -36,6 +37,25 @@ describe("GIVEN the CLI package", () => {
         expect(
           createProgram().commands.map((command) => command.name()),
         ).toEqual(expect.arrayContaining(["read"]));
+      });
+
+      it("SHOULD detect the main module through an npm bin symlink", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-cli-bin-"));
+        const entrypointPath = path.join(cwd, "dist", "index.js");
+        const binPath = path.join(cwd, "bin", "vaultgentic");
+
+        try {
+          await mkdir(path.dirname(entrypointPath), { recursive: true });
+          await mkdir(path.dirname(binPath), { recursive: true });
+          await writeFile(entrypointPath, "#!/usr/bin/env node\n");
+          await symlink(entrypointPath, binPath);
+
+          expect(
+            isMainModule(pathToFileURL(entrypointPath).href, binPath),
+          ).toBe(true);
+        } finally {
+          await rm(cwd, { recursive: true, force: true });
+        }
       });
     });
   });
