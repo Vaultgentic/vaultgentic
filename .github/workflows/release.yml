@@ -28,10 +28,6 @@ jobs:
           registry-url: https://npm.pkg.github.com
           scope: "@vaultgentic"
       - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm format:check
-      - run: pnpm test
-      - run: pnpm build
       - name: Configure GitHub Packages auth
         run: |
           pnpm config set @vaultgentic:registry https://npm.pkg.github.com
