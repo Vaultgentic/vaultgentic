@@ -22,3 +22,10 @@ export {
   type VaultFileMetadata,
   type VaultScanConfig,
 } from "./scanner.js";
+
+export {
+  parseMarkdownNote,
+  type MarkdownHeading,
+  type ParsedMarkdownNote,
+  type WikiLink,
+} from "./markdown.js";

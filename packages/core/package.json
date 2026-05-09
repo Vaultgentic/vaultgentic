@@ -17,6 +17,10 @@
     "./scanner": {
       "types": "./dist/scanner.d.ts",
       "default": "./dist/scanner.js"
+    },
+    "./markdown": {
+      "types": "./dist/markdown.d.ts",
+      "default": "./dist/markdown.js"
     }
   },
   "scripts": {
@@ -26,6 +30,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^12.9.0",
+    "gray-matter": "^4.0.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
