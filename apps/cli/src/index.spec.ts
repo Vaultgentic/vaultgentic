@@ -387,6 +387,149 @@ describe("GIVEN the search command", () => {
     });
   });
 
+  describe("WHEN title mode prints JSON output", () => {
+    describe("THEN known-note matches include title metadata", () => {
+      it("SHOULD search titles, aliases, and paths with limit support", async () => {
+        const { configPath, vaultPath } =
+          await createSearchFixture("title-json");
+        await mkdir(path.join(vaultPath, "search"), { recursive: true });
+        await writeFile(
+          path.join(vaultPath, "search", "embedding-index.md"),
+          "---\ntitle: Embedding Index\naliases:\n  - Vector Lookup\n---\n\n# Embedding Index\n\nSemantic notes.",
+        );
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "Vector Lookup",
+              "--mode",
+              "title",
+              "--config",
+              configPath,
+              "--limit",
+              "1",
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(JSON.parse(output)).toMatchObject([
+          {
+            rank: 1,
+            title: "Embedding Index",
+            path: "search/embedding-index.md",
+            aliases: ["Vector Lookup"],
+            matchedBy: ["title"],
+            score: expect.any(Number),
+          },
+        ]);
+      });
+    });
+  });
+
+  describe("WHEN title mode prints human output", () => {
+    describe("THEN compact known-note matches are shown", () => {
+      it("SHOULD print matched-by and scores without chunk fields", async () => {
+        const { configPath } = await createSearchFixture("title-human");
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "Alpha",
+              "--mode",
+              "title",
+              "--config",
+              configPath,
+              "--scores",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(output).toContain("1. Alpha");
+        expect(output).toContain("Path: alpha.md");
+        expect(output).toContain("Matched by: title");
+        expect(output).toContain("Score:");
+        expect(output).not.toContain("Snippet:");
+      });
+    });
+  });
+
+  describe("WHEN title mode has no matches", () => {
+    describe("THEN an empty result is printed", () => {
+      it("SHOULD print no results", async () => {
+        const { configPath } = await createSearchFixture("title-empty");
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "missing notebook",
+              "--mode",
+              "title",
+              "--config",
+              configPath,
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(output).toBe("No results.");
+      });
+    });
+  });
+
   describe("WHEN an unsupported mode is requested", () => {
     describe("THEN a clear invalid-option error is raised", () => {
       it("SHOULD reject non-keyword search modes", async () => {

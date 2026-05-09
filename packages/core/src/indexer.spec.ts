@@ -8,6 +8,7 @@ import {
   indexVaultFile,
   rebuildSearchIndex,
   searchBm25,
+  searchTitles,
   syncSearchIndex,
 } from "./indexer.js";
 
@@ -255,6 +256,74 @@ describe("GIVEN a BM25 search index", () => {
       });
     });
   });
+
+  describe("WHEN title search is queried", () => {
+    describe("THEN known notes are matched by title, alias, and path", () => {
+      it("SHOULD return exact title matches first", async () => {
+        const config = await createFixture("title-search-title");
+        await writeTitleSearchFiles(config.vaultPath);
+        await syncSearchIndex(config);
+
+        const results = searchTitles(config, {
+          query: "Embedding Index",
+          limit: 5,
+        });
+
+        expect(results[0]).toMatchObject({
+          rank: 1,
+          title: "Embedding Index",
+          path: "search/embedding-index.md",
+          aliases: ["Vector Lookup"],
+          score: expect.any(Number),
+        });
+      });
+
+      it("SHOULD return alias matches", async () => {
+        const config = await createFixture("title-search-alias");
+        await writeTitleSearchFiles(config.vaultPath);
+        await syncSearchIndex(config);
+
+        const results = searchTitles(config, { query: "Vector Lookup" });
+
+        expect(results[0]?.path).toBe("search/embedding-index.md");
+      });
+
+      it("SHOULD return path matches", async () => {
+        const config = await createFixture("title-search-path");
+        await writeTitleSearchFiles(config.vaultPath);
+        await syncSearchIndex(config);
+
+        const results = searchTitles(config, { query: "daily planning" });
+
+        expect(results[0]).toMatchObject({
+          title: "Daily Plan",
+          path: "journals/daily-planning.md",
+        });
+      });
+
+      it("SHOULD return partial and typo-tolerant matches", async () => {
+        const config = await createFixture("title-search-typo");
+        await writeTitleSearchFiles(config.vaultPath);
+        await syncSearchIndex(config);
+
+        const partialResults = searchTitles(config, { query: "embed index" });
+        const typoResults = searchTitles(config, { query: "embeding index" });
+
+        expect(partialResults[0]?.path).toBe("search/embedding-index.md");
+        expect(typoResults[0]?.path).toBe("search/embedding-index.md");
+      });
+
+      it("SHOULD return no results for unknown notes", async () => {
+        const config = await createFixture("title-search-empty");
+        await writeTitleSearchFiles(config.vaultPath);
+        await syncSearchIndex(config);
+
+        const results = searchTitles(config, { query: "missing notebook" });
+
+        expect(results).toEqual([]);
+      });
+    });
+  });
 });
 
 async function createFixture(name: string): Promise<{
@@ -271,6 +340,19 @@ async function createFixture(name: string): Promise<{
   const config = { vaultPath, databasePath };
   initializeSearchDatabase(config);
   return config;
+}
+
+async function writeTitleSearchFiles(vaultPath: string): Promise<void> {
+  await mkdir(path.join(vaultPath, "search"), { recursive: true });
+  await mkdir(path.join(vaultPath, "journals"), { recursive: true });
+  await writeFile(
+    path.join(vaultPath, "search", "embedding-index.md"),
+    "---\ntitle: Embedding Index\naliases:\n  - Vector Lookup\n---\n\n# Embedding Index\n\nSemantic notes.",
+  );
+  await writeFile(
+    path.join(vaultPath, "journals", "daily-planning.md"),
+    "---\ntitle: Daily Plan\n---\n\n# Daily Plan\n\nTasks.",
+  );
 }
 
 function readCounts(databasePath: string): {

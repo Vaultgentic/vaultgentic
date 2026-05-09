@@ -7,12 +7,14 @@ import {
   readVaultTarget,
   rebuildSearchIndex,
   searchBm25,
+  searchTitles,
   syncSearchIndex,
   vaultgenticCoreName,
   type Bm25SearchResult,
   type DatabaseStatus,
   type ReadVaultTargetResult,
   type RebuildSearchIndexResult,
+  type TitleSearchResult,
 } from "@vaultgentic/core";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline/promises";
@@ -20,6 +22,14 @@ import { createInterface } from "node:readline/promises";
 type KeywordSearchOutput = Bm25SearchResult & {
   matchedBy: ["keyword"];
 };
+
+type TitleSearchOutput = TitleSearchResult & {
+  matchedBy: ["title"];
+};
+
+type SearchOutput = KeywordSearchOutput | TitleSearchOutput;
+
+type SearchMode = "keyword" | "title";
 
 type CreateProgramOptions = {
   confirmIndexRebuild?: () => Promise<boolean>;
@@ -154,14 +164,17 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         options: {
           config?: string;
           json?: boolean;
-          mode: "keyword";
+          mode: SearchMode;
           limit?: number;
           scores?: boolean;
         },
       ) => {
         const config = await loadConfig({ configPath: options.config });
-        const results = searchBm25(config, { query, limit: options.limit });
-        const output = results.map(toKeywordSearchOutput);
+        const output = search(config, {
+          query,
+          limit: options.limit,
+          mode: options.mode,
+        });
 
         if (options.json === true) {
           console.log(JSON.stringify(output, null, 2));
@@ -217,8 +230,8 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   return program;
 }
 
-function parseSearchMode(mode: string): "keyword" {
-  if (mode === "keyword") {
+function parseSearchMode(mode: string): SearchMode {
+  if (mode === "keyword" || mode === "title") {
     return mode;
   }
 
@@ -247,8 +260,23 @@ function toKeywordSearchOutput(result: Bm25SearchResult): KeywordSearchOutput {
   return { ...result, matchedBy: ["keyword"] };
 }
 
+function toTitleSearchOutput(result: TitleSearchResult): TitleSearchOutput {
+  return { ...result, matchedBy: ["title"] };
+}
+
+function search(
+  config: Parameters<typeof searchBm25>[0],
+  options: { query: string; limit?: number; mode: SearchMode },
+): SearchOutput[] {
+  if (options.mode === "title") {
+    return searchTitles(config, options).map(toTitleSearchOutput);
+  }
+
+  return searchBm25(config, options).map(toKeywordSearchOutput);
+}
+
 function formatSearchResults(
-  results: KeywordSearchOutput[],
+  results: SearchOutput[],
   options: { showScores?: boolean },
 ): string {
   if (results.length === 0) {
@@ -261,16 +289,19 @@ function formatSearchResults(
 }
 
 function formatSearchResult(
-  result: KeywordSearchOutput,
+  result: SearchOutput,
   options: { showScores?: boolean },
 ): string {
   const lines = [
     `${result.rank}. ${result.title}`,
     `Path: ${result.path}`,
-    ...(result.headingPath.length > 0
+    ...("headingPath" in result && result.headingPath.length > 0
       ? [`Heading: ${result.headingPath.join(" > ")}`]
       : []),
-    `Snippet: ${result.snippet}`,
+    ...("aliases" in result && result.aliases.length > 0
+      ? [`Aliases: ${result.aliases.join(", ")}`]
+      : []),
+    ...("snippet" in result ? [`Snippet: ${result.snippet}`] : []),
     `Matched by: ${result.matchedBy.join(", ")}`,
   ];
 

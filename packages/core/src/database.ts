@@ -87,6 +87,12 @@ export function initializeSearchDatabase(
 
       if (isFts5Available(database)) {
         database.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+            path,
+            title,
+            aliases
+          );
+
           CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
             path,
             title,

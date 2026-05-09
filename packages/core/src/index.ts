@@ -37,11 +37,13 @@ export {
   openSearchDatabase,
   rebuildSearchIndex,
   searchBm25,
+  searchTitles,
   syncSearchIndex,
   type Bm25SearchResult,
   type IndexFileResult,
   type RebuildSearchIndexResult,
   type SyncSearchIndexResult,
+  type TitleSearchResult,
 } from "./indexer.js";
 
 export {

@@ -51,6 +51,14 @@ export type Bm25SearchResult = {
   endLine?: number;
 };
 
+export type TitleSearchResult = {
+  path: string;
+  title: string;
+  aliases: string[];
+  score: number;
+  rank: number;
+};
+
 type ExistingNoteRow = {
   mtimeMs: number;
   sizeBytes: number;
@@ -66,6 +74,13 @@ type SearchRow = {
   chunkIndex: number;
   startLine: number | null;
   endLine: number | null;
+};
+
+type TitleSearchRow = {
+  id: number;
+  path: string;
+  title: string;
+  aliasesJson: string | null;
 };
 
 type FtsChunkRow = {
@@ -295,6 +310,59 @@ export function searchBm25(
   }
 }
 
+export function searchTitles(
+  config: SearchDatabaseConfig,
+  options: { query: string; limit?: number },
+): TitleSearchResult[] {
+  const query = options.query.trim();
+  if (query === "") {
+    return [];
+  }
+
+  const database = openSearchDatabase(config);
+  try {
+    ensureTitleFtsTable(database);
+    const ftsQuery = buildTitleFtsQuery(query);
+    const candidateIds =
+      ftsQuery === "" ? [] : readTitleSearchCandidateIds(database, ftsQuery);
+    const rows = database
+      .prepare(
+        `
+          SELECT id, path, title, aliases_json AS aliasesJson
+          FROM notes
+          ${candidateIds.length > 0 ? `WHERE id IN (${candidateIds.map(() => "?").join(", ")})` : ""}
+          ORDER BY path
+        `,
+      )
+      .all(...candidateIds) as TitleSearchRow[];
+    const scored = rows
+      .map((row) => {
+        const aliases = parseAliases(row.aliasesJson);
+        const score = scoreTitleMatch(query, row.title, aliases, row.path);
+        return { row, aliases, score };
+      })
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => {
+        if (right.score !== left.score) {
+          return right.score - left.score;
+        }
+
+        return left.row.path.localeCompare(right.row.path);
+      })
+      .slice(0, normalizeSearchLimit(options.limit));
+
+    return scored.map((entry, index) => ({
+      path: entry.row.path,
+      title: entry.row.title,
+      aliases: entry.aliases,
+      score: entry.score,
+      rank: index + 1,
+    }));
+  } finally {
+    database.close();
+  }
+}
+
 function indexFileContent(
   database: Database.Database,
   metadata: VaultFileMetadata & { content_hash: string },
@@ -373,12 +441,19 @@ function writePreparedFile(
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
   );
+  const insertNoteFts = database.prepare(
+    `
+      INSERT INTO notes_fts (rowid, path, title, aliases)
+      VALUES (?, ?, ?, ?)
+    `,
+  );
   const insertFts = database.prepare(
     `
       INSERT INTO chunks_fts (rowid, path, title, heading_path, text)
       VALUES (?, ?, ?, ?, ?)
     `,
   );
+  insertNoteFts.run(noteId, note.path, note.title, note.aliases.join(" "));
 
   for (const chunk of chunks) {
     const headingPath = chunk.headingPath.join(" / ");
@@ -415,11 +490,16 @@ function indexCurrentFile(
   }
 
   const chunkCount = readChunkCount(database, metadata.path);
-  if (readFtsCount(database, metadata.path) === chunkCount) {
+  if (
+    readFtsCount(database, metadata.path) === chunkCount &&
+    readTitleFtsCount(database, metadata.path) === 1
+  ) {
     return { path: metadata.path, status: "skipped", chunkCount };
   }
 
   ensureFtsTable(database);
+  ensureTitleFtsTable(database);
+  backfillTitleFtsRow(database, metadata.path);
   backfillFtsRows(database, metadata.path);
   return { path: metadata.path, status: "indexed", chunkCount };
 }
@@ -455,10 +535,19 @@ function deleteIndexedPath(
   database: Database.Database,
   indexedPath: string,
 ): void {
+  const noteIds = database
+    .prepare("SELECT id FROM notes WHERE path = ?")
+    .all(indexedPath) as Array<{ id: number }>;
   const chunkIds = database
     .prepare("SELECT id FROM chunks WHERE path = ?")
     .all(indexedPath) as Array<{ id: number }>;
+  const deleteNoteFts = database.prepare(
+    "DELETE FROM notes_fts WHERE rowid = ?",
+  );
   const deleteFts = database.prepare("DELETE FROM chunks_fts WHERE rowid = ?");
+  for (const note of noteIds) {
+    deleteNoteFts.run(note.id);
+  }
   for (const chunk of chunkIds) {
     deleteFts.run(chunk.id);
   }
@@ -466,6 +555,7 @@ function deleteIndexedPath(
 }
 
 function clearIndexedContent(database: Database.Database): void {
+  database.prepare("DELETE FROM notes_fts").run();
   database.prepare("DELETE FROM chunks_fts").run();
   database.prepare("DELETE FROM chunks").run();
   database.prepare("DELETE FROM notes").run();
@@ -562,6 +652,57 @@ function readFtsCount(
   return row.count;
 }
 
+function readTitleFtsCount(
+  database: Database.Database,
+  indexedPath: string,
+): number {
+  ensureTitleFtsTable(database);
+  const row = database
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM notes_fts
+        JOIN notes n ON n.id = notes_fts.rowid
+        WHERE n.path = ?
+      `,
+    )
+    .get(indexedPath) as { count: number };
+  return row.count;
+}
+
+function backfillTitleFtsRow(
+  database: Database.Database,
+  indexedPath: string,
+): void {
+  const note = database
+    .prepare(
+      `
+        SELECT id, path, title, aliases_json AS aliasesJson
+        FROM notes
+        WHERE path = ?
+      `,
+    )
+    .get(indexedPath) as TitleSearchRow | undefined;
+  if (note === undefined) {
+    return;
+  }
+
+  database.prepare("DELETE FROM notes_fts WHERE rowid = ?").run(note.id);
+  database
+    .prepare(
+      `
+        INSERT INTO notes_fts (rowid, path, title, aliases)
+        VALUES (?, ?, ?, ?)
+      `,
+    )
+    .run(
+      note.id,
+      note.path,
+      note.title,
+      parseAliases(note.aliasesJson).join(" "),
+    );
+}
+
 function backfillFtsRows(
   database: Database.Database,
   indexedPath: string,
@@ -609,11 +750,51 @@ function ensureFtsTable(database: Database.Database): void {
   }
 }
 
+function ensureTitleFtsTable(database: Database.Database): void {
+  const row = database
+    .prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes_fts'",
+    )
+    .get();
+  if (row === undefined) {
+    throw new Error("SQLite FTS5 is not available for title search indexing");
+  }
+}
+
+function readTitleSearchCandidateIds(
+  database: Database.Database,
+  ftsQuery: string,
+): number[] {
+  return database
+    .prepare(
+      `
+        SELECT rowid AS id
+        FROM notes_fts
+        WHERE notes_fts MATCH ?
+      `,
+    )
+    .all(ftsQuery)
+    .map((row) => (row as { id: number }).id);
+}
+
 function parseHeadingPath(headingPath: string | null): string[] {
   if (headingPath === null || headingPath === "") {
     return [];
   }
   return headingPath.split(" / ");
+}
+
+function parseAliases(aliasesJson: string | null): string[] {
+  if (aliasesJson === null || aliasesJson === "") {
+    return [];
+  }
+
+  const aliases = JSON.parse(aliasesJson) as unknown;
+  if (!Array.isArray(aliases)) {
+    return [];
+  }
+
+  return aliases.filter((alias): alias is string => typeof alias === "string");
 }
 
 function hashContent(content: string): string {
@@ -633,10 +814,123 @@ function buildFtsQuery(query: string): string {
     .join(" ");
 }
 
+function buildTitleFtsQuery(query: string): string {
+  return normalizeSearchText(query)
+    .split(/\s+/u)
+    .map((term) => term.trim().replace(/[^\p{L}\p{N}_]+/gu, ""))
+    .filter((term) => term !== "")
+    .map((term) => `${term.replaceAll('"', '""')}*`)
+    .join(" ");
+}
+
 function normalizeSearchLimit(limit: number | undefined): number {
   if (limit === undefined || !Number.isFinite(limit)) {
     return 10;
   }
 
   return Math.min(100, Math.max(1, Math.trunc(limit)));
+}
+
+function scoreTitleMatch(
+  query: string,
+  title: string,
+  aliases: string[],
+  notePath: string,
+): number {
+  const fields = [
+    { value: title, exact: 120, contains: 100, token: 80 },
+    ...aliases.map((alias) => ({
+      value: alias,
+      exact: 110,
+      contains: 90,
+      token: 70,
+    })),
+    { value: notePath, exact: 100, contains: 75, token: 55 },
+  ];
+  let bestScore = 0;
+
+  for (const field of fields) {
+    const score = scoreFieldMatch(query, field);
+    if (score > bestScore) {
+      bestScore = score;
+    }
+  }
+
+  return bestScore;
+}
+
+function scoreFieldMatch(
+  query: string,
+  field: { value: string; exact: number; contains: number; token: number },
+): number {
+  const normalizedQuery = normalizeSearchText(query);
+  const normalizedValue = normalizeSearchText(field.value);
+  if (normalizedQuery === "" || normalizedValue === "") {
+    return 0;
+  }
+
+  if (normalizedValue === normalizedQuery) {
+    return field.exact;
+  }
+
+  if (normalizedValue.includes(normalizedQuery)) {
+    return field.contains;
+  }
+
+  const queryTokens = tokenizeSearchText(normalizedQuery);
+  const valueTokens = tokenizeSearchText(normalizedValue);
+  if (
+    queryTokens.length === 0 ||
+    !queryTokens.every((queryToken) =>
+      valueTokens.some((valueToken) => tokenMatches(queryToken, valueToken)),
+    )
+  ) {
+    return 0;
+  }
+
+  return field.token + Math.max(0, 10 - valueTokens.length);
+}
+
+function normalizeSearchText(value: string): string {
+  return value
+    .toLocaleLowerCase("en-US")
+    .replace(/\.md$/u, "")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function tokenizeSearchText(value: string): string[] {
+  return value.split(/\s+/u).filter((token) => token !== "");
+}
+
+function tokenMatches(queryToken: string, valueToken: string): boolean {
+  return (
+    valueToken === queryToken ||
+    valueToken.startsWith(queryToken) ||
+    queryToken.startsWith(valueToken) ||
+    (queryToken.length >= 4 && levenshteinDistance(queryToken, valueToken) <= 1)
+  );
+}
+
+function levenshteinDistance(left: string, right: string): number {
+  const previous = Array.from(
+    { length: right.length + 1 },
+    (_, index) => index,
+  );
+
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
+    let diagonal = previous[0];
+    previous[0] = leftIndex + 1;
+
+    for (let rightIndex = 0; rightIndex < right.length; rightIndex += 1) {
+      const insertion = previous[rightIndex + 1] + 1;
+      const deletion = previous[rightIndex] + 1;
+      const substitution =
+        diagonal + (left[leftIndex] === right[rightIndex] ? 0 : 1);
+      diagonal = previous[rightIndex + 1];
+      previous[rightIndex + 1] = Math.min(insertion, deletion, substitution);
+    }
+  }
+
+  return previous[right.length];
 }
