@@ -33,15 +33,44 @@ type TitleSearchOutput = TitleSearchResult & {
   matchedBy: ["title"];
 };
 
+type HybridComponentName = "keyword" | "vector" | "title";
+
+type HybridComponentScore = {
+  rank: number;
+  score: number;
+};
+
+type HybridSearchOutput = (
+  | Bm25SearchResult
+  | SemanticSearchResult
+  | TitleSearchResult
+) & {
+  matchedBy: HybridComponentName[];
+  score: number;
+  componentScores: Partial<Record<HybridComponentName, HybridComponentScore>>;
+};
+
 type SearchOutput =
   | KeywordSearchOutput
   | SemanticSearchOutput
-  | TitleSearchOutput;
+  | TitleSearchOutput
+  | HybridSearchOutput;
 
-type SearchMode = "keyword" | "semantic" | "title";
+type SearchMode = "hybrid" | "keyword" | "semantic" | "title";
 
 type CreateProgramOptions = {
   confirmIndexRebuild?: () => Promise<boolean>;
+};
+
+const defaultSearchLimit = 10;
+const hybridBm25Limit = 40;
+const hybridSemanticLimit = 40;
+const hybridTitleLimit = 10;
+const rrfK = 60;
+const hybridWeights: Record<HybridComponentName, number> = {
+  keyword: 1,
+  vector: 1,
+  title: 1.5,
 };
 
 const require = createRequire(import.meta.url);
@@ -164,7 +193,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .description("Search indexed vault notes")
     .option("--config <path>", "Path to config file")
     .option("--json", "Print JSON output")
-    .option("--mode <mode>", "Search mode", parseSearchMode, "keyword")
+    .option("--mode <mode>", "Search mode", parseSearchMode, "hybrid")
     .option("--limit <number>", "Maximum result count", parseSearchLimit)
     .option("--scores", "Show scores in human output")
     .action(
@@ -240,7 +269,12 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
 }
 
 function parseSearchMode(mode: string): SearchMode {
-  if (mode === "keyword" || mode === "semantic" || mode === "title") {
+  if (
+    mode === "hybrid" ||
+    mode === "keyword" ||
+    mode === "semantic" ||
+    mode === "title"
+  ) {
     return mode;
   }
 
@@ -283,6 +317,10 @@ async function search(
   config: Parameters<typeof searchBm25>[0],
   options: { query: string; limit?: number; mode: SearchMode },
 ): Promise<SearchOutput[]> {
+  if (options.mode === "hybrid") {
+    return searchHybrid(config, options);
+  }
+
   if (options.mode === "title") {
     return searchTitles(config, options).map(toTitleSearchOutput);
   }
@@ -292,6 +330,97 @@ async function search(
   }
 
   return searchBm25(config, options).map(toKeywordSearchOutput);
+}
+
+async function searchHybrid(
+  config: Parameters<typeof searchBm25>[0],
+  options: { query: string; limit?: number },
+): Promise<HybridSearchOutput[]> {
+  const finalLimit = options.limit ?? defaultSearchLimit;
+  const keywordLimit = Math.max(hybridBm25Limit, finalLimit);
+  const vectorLimit = Math.max(hybridSemanticLimit, finalLimit);
+  const titleLimit = Math.max(hybridTitleLimit, finalLimit);
+  const [keywordResults, vectorResults, titleResults] = await Promise.all([
+    Promise.resolve(
+      searchBm25(config, { query: options.query, limit: keywordLimit }),
+    ),
+    searchSemantic(config, { query: options.query, limit: vectorLimit }),
+    Promise.resolve(
+      searchTitles(config, { query: options.query, limit: titleLimit }),
+    ),
+  ]);
+  const candidates = new Map<string, HybridSearchOutput>();
+
+  for (const result of keywordResults) {
+    addHybridCandidate(candidates, result, "keyword");
+  }
+
+  for (const result of vectorResults) {
+    addHybridCandidate(candidates, result, "vector");
+  }
+
+  for (const result of titleResults) {
+    addHybridCandidate(candidates, result, "title");
+  }
+
+  return [...candidates.values()]
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      return left.rank - right.rank;
+    })
+    .slice(0, finalLimit)
+    .map((result, index) => ({ ...result, rank: index + 1 }));
+}
+
+function addHybridCandidate(
+  candidates: Map<string, HybridSearchOutput>,
+  result: Bm25SearchResult | SemanticSearchResult | TitleSearchResult,
+  componentName: HybridComponentName,
+): void {
+  const key = result.path;
+  const existing = candidates.get(key);
+  if (existing !== undefined) {
+    addHybridComponent(existing, componentName, result);
+    return;
+  }
+
+  const candidate: HybridSearchOutput = {
+    ...result,
+    matchedBy: [],
+    score: 0,
+    componentScores: {},
+  };
+  addHybridComponent(candidate, componentName, result);
+  candidates.set(key, candidate);
+}
+
+function addHybridComponent(
+  candidate: HybridSearchOutput,
+  componentName: HybridComponentName,
+  result: Pick<SearchOutput, "rank" | "score">,
+): void {
+  const existingComponentScore = candidate.componentScores[componentName];
+  if (existingComponentScore !== undefined) {
+    if (existingComponentScore.rank <= result.rank) {
+      return;
+    }
+
+    candidate.score -=
+      hybridWeights[componentName] / (rrfK + existingComponentScore.rank);
+  }
+
+  if (!candidate.matchedBy.includes(componentName)) {
+    candidate.matchedBy.push(componentName);
+  }
+
+  candidate.componentScores[componentName] = {
+    rank: result.rank,
+    score: result.score,
+  };
+  candidate.score += hybridWeights[componentName] / (rrfK + result.rank);
 }
 
 function formatSearchResults(
@@ -326,9 +455,30 @@ function formatSearchResult(
 
   if (options.showScores === true) {
     lines.push(`Score: ${result.score}`);
+    if ("componentScores" in result) {
+      lines.push(
+        `Component scores: ${formatComponentScores(result.componentScores)}`,
+      );
+    }
   }
 
   return lines.join("\n");
+}
+
+function formatComponentScores(
+  componentScores: HybridSearchOutput["componentScores"],
+): string {
+  return (
+    Object.entries(componentScores) as [
+      HybridComponentName,
+      HybridComponentScore,
+    ][]
+  )
+    .map(
+      ([componentName, componentScore]) =>
+        `${componentName} rank ${componentScore.rank} score ${componentScore.score}`,
+    )
+    .join(", ");
 }
 
 function formatIndexFileResult(result: {

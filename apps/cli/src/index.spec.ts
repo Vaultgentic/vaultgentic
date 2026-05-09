@@ -499,6 +499,163 @@ describe("GIVEN the search command", () => {
     });
   });
 
+  describe("WHEN default mode prints JSON output", () => {
+    describe("THEN hybrid search results include fused component details", () => {
+      it("SHOULD fuse keyword and title matches without duplicate note results", async () => {
+        const { configPath } = await createSearchFixture("hybrid-json");
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "Alpha",
+              "--config",
+              configPath,
+              "--limit",
+              "1",
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+        const results = JSON.parse(output) as Array<{
+          rank: number;
+          path: string;
+          score: number;
+          matchedBy: string[];
+          componentScores: Record<string, { rank: number; score: number }>;
+        }>;
+
+        expect(results).toHaveLength(1);
+        expect(results[0]).toMatchObject({
+          rank: 1,
+          path: "alpha.md",
+          score: expect.any(Number),
+          matchedBy: expect.arrayContaining(["keyword", "title"]),
+          componentScores: {
+            keyword: { rank: expect.any(Number), score: expect.any(Number) },
+            title: { rank: expect.any(Number), score: expect.any(Number) },
+          },
+        });
+      });
+    });
+  });
+
+  describe("WHEN default mode has a title-only match", () => {
+    describe("THEN missing component scores are omitted", () => {
+      it("SHOULD include available component ranks without raw score comparison", async () => {
+        const { configPath, vaultPath } = await createSearchFixture(
+          "hybrid-missing-scores",
+        );
+        await mkdir(path.join(vaultPath, "search"), { recursive: true });
+        await writeFile(
+          path.join(vaultPath, "search", "embedding-index.md"),
+          "---\ntitle: Embedding Index\naliases:\n  - Vector Lookup\n---\n\n# Embedding Index\n\nSemantic notes.",
+        );
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "Vector Lookup",
+              "--config",
+              configPath,
+              "--limit",
+              "1",
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+        const [result] = JSON.parse(output) as Array<{
+          matchedBy: string[];
+          componentScores: Record<string, { rank: number; score: number }>;
+        }>;
+
+        expect(result.matchedBy).toContain("title");
+        expect(result.componentScores.title).toEqual({
+          rank: expect.any(Number),
+          score: expect.any(Number),
+        });
+        expect(result.componentScores.keyword).toBeUndefined();
+      });
+    });
+  });
+
+  describe("WHEN default mode prints human scores", () => {
+    describe("THEN hybrid score details are shown", () => {
+      it("SHOULD print fused score and component ranks", async () => {
+        const { configPath } = await createSearchFixture("hybrid-human");
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "Alpha",
+              "--config",
+              configPath,
+              "--scores",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(output).toContain("Matched by:");
+        expect(output).toContain("Score:");
+        expect(output).toContain("Component scores:");
+        expect(output).toContain("title rank");
+      });
+    });
+  });
+
   describe("WHEN title mode prints human output", () => {
     describe("THEN compact known-note matches are shown", () => {
       it("SHOULD print matched-by and scores without chunk fields", async () => {
@@ -586,7 +743,7 @@ describe("GIVEN the search command", () => {
 
   describe("WHEN an unsupported mode is requested", () => {
     describe("THEN a clear invalid-option error is raised", () => {
-      it("SHOULD reject non-keyword search modes", async () => {
+      it("SHOULD reject unknown search modes", async () => {
         const errors: string[] = [];
         const program = createProgram()
           .exitOverride()
@@ -598,11 +755,11 @@ describe("GIVEN the search command", () => {
 
         await expect(
           program.parseAsync(
-            ["node", "vaultgentic", "search", "sqlite-vec", "--mode", "hybrid"],
+            ["node", "vaultgentic", "search", "sqlite-vec", "--mode", "bogus"],
             { from: "node" },
           ),
         ).rejects.toThrow("process.exit unexpectedly called");
-        expect(errors.join("")).toContain("Unsupported search mode: hybrid");
+        expect(errors.join("")).toContain("Unsupported search mode: bogus");
       });
     });
   });
