@@ -187,6 +187,33 @@ describe("GIVEN a BM25 search index", () => {
     });
   });
 
+  describe("WHEN the vault is synced with progress reporting", () => {
+    describe("THEN indexing phases are reported", () => {
+      it("SHOULD emit scanning, parsing, embedding, and writing progress", async () => {
+        const config = await createFixture("sync-progress");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "# Alpha");
+        const events: string[] = [];
+
+        await syncSearchIndex(config, {
+          onProgress: (event) => {
+            events.push(
+              `${event.phase}:${event.current ?? ""}/${event.total ?? ""}:${event.path ?? ""}`,
+            );
+          },
+        });
+
+        expect(events).toEqual([
+          "scanning:/:",
+          "scanning:1/1:",
+          "scanning:1/1:alpha.md",
+          "parsing:1/1:alpha.md",
+          "embedding:1/1:alpha.md",
+          "writing:1/1:alpha.md",
+        ]);
+      });
+    });
+  });
+
   describe("WHEN the index is rebuilt from scratch", () => {
     describe("THEN stale local data is replaced", () => {
       it("SHOULD clear deleted notes and index current vault files", async () => {

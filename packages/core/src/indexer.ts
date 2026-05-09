@@ -49,6 +49,25 @@ export type RebuildSearchIndexResult = {
   status: DatabaseStatus;
 };
 
+export type IndexProgressPhase =
+  | "scanning"
+  | "parsing"
+  | "embedding"
+  | "writing"
+  | "deleting";
+
+export type IndexProgressEvent = {
+  phase: IndexProgressPhase;
+  message: string;
+  current?: number;
+  total?: number;
+  path?: string;
+};
+
+export type IndexProgressOptions = {
+  onProgress?: (event: IndexProgressEvent) => void;
+};
+
 export type Bm25SearchResult = {
   path: string;
   title: string;
@@ -166,10 +185,16 @@ export function openSearchDatabase(
 export async function indexVaultFile(
   config: SearchDatabaseConfig,
   vaultRelativePath: string,
+  options: IndexProgressOptions = {},
 ): Promise<IndexFileResult> {
   try {
     const relativePath = resolveIndexPath(config.vaultPath, vaultRelativePath);
     const absolutePath = path.join(config.vaultPath, relativePath);
+    emitIndexProgress(options, {
+      phase: "scanning",
+      message: `Reading ${relativePath}`,
+      path: relativePath,
+    });
     const [fileStat, content] = await Promise.all([
       stat(absolutePath),
       readFile(absolutePath, "utf8"),
@@ -183,7 +208,10 @@ export async function indexVaultFile(
 
     const database = openSearchDatabase(config);
     try {
-      return await indexFileContent(database, metadata, content);
+      return await indexFileContent(database, metadata, content, options, {
+        current: 1,
+        total: 1,
+      });
     } finally {
       database.close();
     }
@@ -215,10 +243,21 @@ function resolveIndexPath(
 
 export async function syncSearchIndex(
   config: SearchDatabaseConfig,
+  options: IndexProgressOptions = {},
 ): Promise<SyncSearchIndexResult> {
   let database: Database.Database | undefined;
   try {
+    emitIndexProgress(options, {
+      phase: "scanning",
+      message: "Scanning vault",
+    });
     const files = await scanVaultFiles(config, { includeContentHash: true });
+    emitIndexProgress(options, {
+      phase: "scanning",
+      message: `Found ${files.length} markdown ${files.length === 1 ? "file" : "files"}`,
+      current: files.length,
+      total: files.length,
+    });
     database = openSearchDatabase(config);
     const result: SyncSearchIndexResult = {
       indexed: 0,
@@ -229,17 +268,29 @@ export async function syncSearchIndex(
     };
     const currentPaths = new Set(files.map((file) => file.path));
 
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
+      const fileProgress = { current: index + 1, total: files.length };
+      emitIndexProgress(options, {
+        phase: "scanning",
+        message: `Checking ${file.path}`,
+        ...fileProgress,
+        path: file.path,
+      });
       if (file.content_hash === undefined) {
         throw new SearchIndexerError(
           `Missing content hash for scanned file: ${file.path}`,
         );
       }
 
-      const currentResult = await indexCurrentFile(database, {
-        ...file,
-        content_hash: file.content_hash,
-      });
+      const currentResult = await indexCurrentFile(
+        database,
+        {
+          ...file,
+          content_hash: file.content_hash,
+        },
+        options,
+        fileProgress,
+      );
       if (currentResult !== undefined) {
         result.files.push(currentResult);
         if (currentResult.status === "indexed") {
@@ -258,6 +309,8 @@ export async function syncSearchIndex(
         database,
         { ...file, content_hash: file.content_hash },
         content,
+        options,
+        fileProgress,
       );
       result.files.push(fileResult);
       if (fileResult.status === "indexed") {
@@ -269,6 +322,11 @@ export async function syncSearchIndex(
 
     for (const indexedPath of readIndexedPaths(database)) {
       if (!currentPaths.has(indexedPath)) {
+        emitIndexProgress(options, {
+          phase: "deleting",
+          message: `Deleting stale index entry ${indexedPath}`,
+          path: indexedPath,
+        });
         deleteIndexedPath(database, indexedPath);
         result.deleted += 1;
         result.deletedPaths.push(indexedPath);
@@ -285,13 +343,25 @@ export async function syncSearchIndex(
 
 export async function rebuildSearchIndex(
   config: SearchDatabaseConfig,
+  options: IndexProgressOptions = {},
 ): Promise<RebuildSearchIndexResult> {
   let database: Database.Database | undefined;
   try {
+    emitIndexProgress(options, {
+      phase: "scanning",
+      message: "Scanning vault",
+    });
     const files = await scanVaultFiles(config, { includeContentHash: true });
+    emitIndexProgress(options, {
+      phase: "scanning",
+      message: `Found ${files.length} markdown ${files.length === 1 ? "file" : "files"}`,
+      current: files.length,
+      total: files.length,
+    });
     const preparedFiles: PreparedIndexedFile[] = [];
 
-    for (const file of files) {
+    for (const [index, file] of files.entries()) {
+      const fileProgress = { current: index + 1, total: files.length };
       if (file.content_hash === undefined) {
         throw new SearchIndexerError(
           `Missing content hash for scanned file: ${file.path}`,
@@ -306,6 +376,8 @@ export async function rebuildSearchIndex(
         await prepareFileContent(
           { ...file, content_hash: file.content_hash },
           content,
+          options,
+          fileProgress,
         ),
       );
     }
@@ -326,7 +398,14 @@ export async function rebuildSearchIndex(
       resetEmbeddingStorage(activeDatabase);
       clearIndexedContent(activeDatabase);
 
-      for (const preparedFile of preparedFiles) {
+      for (const [index, preparedFile] of preparedFiles.entries()) {
+        emitIndexProgress(options, {
+          phase: "writing",
+          message: `Writing ${preparedFile.metadata.path}`,
+          current: index + 1,
+          total: preparedFiles.length,
+          path: preparedFile.metadata.path,
+        });
         const writtenChunks = writePreparedFile(
           activeDatabase,
           preparedFile,
@@ -543,15 +622,29 @@ function toSearchIndexerError(
   });
 }
 
+function emitIndexProgress(
+  options: IndexProgressOptions,
+  event: IndexProgressEvent,
+): void {
+  options.onProgress?.(event);
+}
+
 async function indexFileContent(
   database: Database.Database,
   metadata: VaultFileMetadata & { content_hash: string },
   content: string,
+  options: IndexProgressOptions = {},
+  fileProgress?: { current: number; total: number },
 ): Promise<IndexFileResult> {
   const existing = readExistingNote(database, metadata.path);
 
   if (isExistingNoteCurrent(existing, metadata)) {
-    const currentResult = await indexCurrentFile(database, metadata);
+    const currentResult = await indexCurrentFile(
+      database,
+      metadata,
+      options,
+      fileProgress,
+    );
     if (currentResult !== undefined) {
       return currentResult;
     }
@@ -559,10 +652,21 @@ async function indexFileContent(
 
   ensureFtsTable(database);
   ensureVectorTable(database);
-  const preparedFile = await prepareFileContent(metadata, content);
+  const preparedFile = await prepareFileContent(
+    metadata,
+    content,
+    options,
+    fileProgress,
+  );
   const now = Date.now();
 
   database.transaction(() => {
+    emitIndexProgress(options, {
+      phase: "writing",
+      message: `Writing ${metadata.path}`,
+      ...fileProgress,
+      path: metadata.path,
+    });
     deleteIndexedPath(database, metadata.path);
     const writtenChunks = writePreparedFile(database, preparedFile, now);
     writeChunkEmbeddings(database, writtenChunks);
@@ -578,8 +682,22 @@ async function indexFileContent(
 async function prepareFileContent(
   metadata: VaultFileMetadata & { content_hash: string },
   content: string,
+  options: IndexProgressOptions = {},
+  fileProgress?: { current: number; total: number },
 ): Promise<PreparedIndexedFile> {
+  emitIndexProgress(options, {
+    phase: "parsing",
+    message: `Parsing ${metadata.path}`,
+    ...fileProgress,
+    path: metadata.path,
+  });
   const note = parseMarkdownNote({ path: metadata.path, content });
+  emitIndexProgress(options, {
+    phase: "embedding",
+    message: `Embedding ${metadata.path}`,
+    ...fileProgress,
+    path: metadata.path,
+  });
   const chunks = await Promise.all(
     chunkMarkdownNote(note).map(async (chunk) => ({
       chunk,
@@ -680,6 +798,8 @@ function writePreparedFile(
 async function indexCurrentFile(
   database: Database.Database,
   metadata: VaultFileMetadata & { content_hash: string },
+  options: IndexProgressOptions = {},
+  fileProgress?: { current: number; total: number },
 ): Promise<IndexFileResult | undefined> {
   const existing = readExistingNote(database, metadata.path);
   if (!isExistingNoteCurrent(existing, metadata)) {
@@ -698,10 +818,22 @@ async function indexCurrentFile(
   ensureFtsTable(database);
   ensureTitleFtsTable(database);
   ensureVectorTable(database);
+  emitIndexProgress(options, {
+    phase: "embedding",
+    message: `Embedding ${metadata.path}`,
+    ...fileProgress,
+    path: metadata.path,
+  });
   const vectorChunks = await prepareExistingChunkEmbeddings(
     database,
     metadata.path,
   );
+  emitIndexProgress(options, {
+    phase: "writing",
+    message: `Writing ${metadata.path}`,
+    ...fileProgress,
+    path: metadata.path,
+  });
   backfillTitleFtsRow(database, metadata.path);
   backfillFtsRows(database, metadata.path);
   writeChunkEmbeddings(database, vectorChunks);

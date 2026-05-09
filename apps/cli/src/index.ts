@@ -13,6 +13,7 @@ import {
   vaultgenticCoreName,
   type Bm25SearchResult,
   type DatabaseStatus,
+  type IndexProgressEvent,
   type ReadVaultTargetResult,
   type RebuildSearchIndexResult,
   type SemanticSearchResult,
@@ -23,6 +24,7 @@ import { createRequire } from "node:module";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import {
+  createCliProgress,
   formatCliError,
   isCommanderExit,
   shouldUseColor,
@@ -67,6 +69,7 @@ type SearchMode = "hybrid" | "keyword" | "semantic" | "title";
 
 type CreateProgramOptions = {
   confirmIndexRebuild?: () => Promise<boolean>;
+  progressStream?: Pick<NodeJS.WriteStream, "isTTY" | "write">;
 };
 
 const defaultSearchLimit = 10;
@@ -95,6 +98,7 @@ export function isMainModule(moduleUrl: string, argvPath: string | undefined) {
 
 export function createProgram(options: CreateProgramOptions = {}): Command {
   const confirmIndexRebuild = options.confirmIndexRebuild ?? promptIndexRebuild;
+  const progressStream = options.progressStream ?? process.stderr;
   const program = new Command()
     .name("vaultgentic")
     .description("Local Obsidian search and MCP tooling")
@@ -119,7 +123,15 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         options: { config?: string; json?: boolean },
       ) => {
         const config = await loadConfig({ configPath: options.config });
-        const result = await indexVaultFile(config, filePath);
+        const result = await runWithIndexProgress(
+          {
+            enabled: options.json !== true,
+            stream: progressStream,
+            successMessage: "Indexed file",
+            failureMessage: "Indexing failed",
+          },
+          (onProgress) => indexVaultFile(config, filePath, { onProgress }),
+        );
 
         if (options.json === true) {
           console.log(JSON.stringify(result, null, 2));
@@ -137,7 +149,15 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .option("--json", "Print JSON output")
     .action(async (options: { config?: string; json?: boolean }) => {
       const config = await loadConfig({ configPath: options.config });
-      const result = await syncSearchIndex(config);
+      const result = await runWithIndexProgress(
+        {
+          enabled: options.json !== true,
+          stream: progressStream,
+          successMessage: "Index sync complete",
+          failureMessage: "Index sync failed",
+        },
+        (onProgress) => syncSearchIndex(config, { onProgress }),
+      );
 
       if (options.json === true) {
         console.log(JSON.stringify(result, null, 2));
@@ -175,7 +195,15 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         }
 
         const config = await loadConfig({ configPath: options.config });
-        const result = await rebuildSearchIndex(config);
+        const result = await runWithIndexProgress(
+          {
+            enabled: options.json !== true,
+            stream: progressStream,
+            successMessage: "Index rebuild complete",
+            failureMessage: "Index rebuild failed",
+          },
+          (onProgress) => rebuildSearchIndex(config, { onProgress }),
+        );
 
         if (options.json === true) {
           console.log(JSON.stringify(result, null, 2));
@@ -292,7 +320,7 @@ export async function runCli(
 ): Promise<number> {
   const errorOptions = getErrorOptions(argv);
   const commanderErrors: string[] = [];
-  const program = createProgram();
+  const program = createProgram({ progressStream: io.stderr });
   configureErrorHandling(program, commanderErrors);
 
   try {
@@ -359,6 +387,30 @@ function toCliError(error: unknown, commanderErrors: string[]): unknown {
   }
 
   return error;
+}
+
+async function runWithIndexProgress<Result>(
+  options: {
+    enabled: boolean;
+    stream: Pick<NodeJS.WriteStream, "isTTY" | "write">;
+    successMessage: string;
+    failureMessage: string;
+  },
+  run: (onProgress: (event: IndexProgressEvent) => void) => Promise<Result>,
+): Promise<Result> {
+  const progress = createCliProgress({
+    enabled: options.enabled,
+    stream: options.stream,
+  });
+
+  try {
+    const result = await run(progress.handle);
+    progress.succeed(options.successMessage);
+    return result;
+  } catch (error) {
+    progress.fail(options.failureMessage);
+    throw error;
+  }
 }
 
 function parseSearchMode(mode: string): SearchMode {

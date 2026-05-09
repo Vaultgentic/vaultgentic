@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { formatCliError, shouldUseColor } from "./presentation.js";
+import {
+  createCliProgress,
+  formatCliError,
+  formatIndexProgressEvent,
+  shouldUseColor,
+} from "./presentation.js";
 
 describe("GIVEN CLI error presentation", () => {
   describe("WHEN formatting an unexpected error without debug", () => {
@@ -90,6 +95,78 @@ describe("GIVEN CLI error presentation", () => {
         it("SHOULD NOT use color", () => {
           expect(shouldUseColor({ isTTY: false })).toBe(false);
         });
+      });
+    });
+  });
+});
+
+describe("GIVEN CLI progress presentation", () => {
+  describe("WHEN formatting a known-total progress event", () => {
+    describe("THEN a compact progress bar is included", () => {
+      it("SHOULD show phase, bar, count, and path", () => {
+        const output = formatIndexProgressEvent({
+          phase: "embedding",
+          message: "Embedding alpha.md",
+          current: 1,
+          total: 2,
+          path: "alpha.md",
+        });
+
+        expect(output).toBe("Embedding [█████░░░░░] 1/2 alpha.md");
+      });
+    });
+  });
+
+  describe("WHEN output is not a TTY", () => {
+    describe("THEN progress degrades to plain lines", () => {
+      it("SHOULD write stable non-animated progress text", () => {
+        let output = "";
+        const progress = createCliProgress({
+          enabled: true,
+          stream: {
+            isTTY: false,
+            write: (chunk: string | Uint8Array) => {
+              output += String(chunk);
+              return true;
+            },
+          },
+        });
+
+        progress.handle({
+          phase: "parsing",
+          message: "Parsing alpha.md",
+          current: 1,
+          total: 1,
+          path: "alpha.md",
+        });
+        progress.succeed("Index sync complete");
+
+        expect(output).toBe(
+          "Parsing/chunking [██████████] 1/1 alpha.md\nIndex sync complete\n",
+        );
+      });
+    });
+  });
+
+  describe("WHEN progress is disabled", () => {
+    describe("THEN no output is written", () => {
+      it("SHOULD keep machine-readable commands quiet", () => {
+        let output = "";
+        const progress = createCliProgress({
+          enabled: false,
+          stream: {
+            isTTY: false,
+            write: (chunk: string | Uint8Array) => {
+              output += String(chunk);
+              return true;
+            },
+          },
+        });
+
+        progress.handle({ phase: "scanning", message: "Scanning vault" });
+        progress.succeed("Index sync complete");
+
+        expect(output).toBe("");
       });
     });
   });

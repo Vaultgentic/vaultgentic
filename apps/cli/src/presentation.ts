@@ -1,4 +1,6 @@
 import { CommanderError, InvalidArgumentError } from "commander";
+import type { IndexProgressEvent, IndexProgressPhase } from "@vaultgentic/core";
+import ora, { type Ora } from "ora";
 import { createColors } from "picocolors";
 
 type ExpectedError = Error & {
@@ -19,6 +21,27 @@ export type CliErrorFormatOptions = {
   color: boolean;
   debug: boolean;
   json: boolean;
+};
+
+export type CliProgress = {
+  handle: (event: IndexProgressEvent) => void;
+  succeed: (message: string) => void;
+  fail: (message: string) => void;
+  stop: () => void;
+};
+
+export type CliProgressOptions = {
+  enabled: boolean;
+  stream: Pick<NodeJS.WriteStream, "isTTY" | "write">;
+};
+
+const progressBarWidth = 10;
+const progressPhaseLabels: Record<IndexProgressPhase, string> = {
+  scanning: "Scanning",
+  parsing: "Parsing/chunking",
+  embedding: "Embedding",
+  writing: "Writing",
+  deleting: "Deleting",
 };
 
 export function formatCliError(
@@ -62,8 +85,89 @@ export function shouldUseColor(stream: { isTTY?: boolean }): boolean {
   return stream.isTTY === true;
 }
 
+export function createCliProgress(options: CliProgressOptions): CliProgress {
+  if (!options.enabled) {
+    return createNoopProgress();
+  }
+
+  if (options.stream.isTTY === true) {
+    let spinner: Ora | undefined;
+    return {
+      handle: (event) => {
+        const text = formatIndexProgressEvent(event);
+        if (spinner === undefined) {
+          spinner = ora({
+            stream: options.stream as unknown as NodeJS.WritableStream,
+          }).start(text);
+          return;
+        }
+
+        spinner.text = text;
+      },
+      succeed: (message) => {
+        spinner?.succeed(message);
+        spinner = undefined;
+      },
+      fail: (message) => {
+        spinner?.fail(message);
+        spinner = undefined;
+      },
+      stop: () => {
+        spinner?.stop();
+        spinner = undefined;
+      },
+    };
+  }
+
+  return {
+    handle: (event) => {
+      options.stream.write(`${formatIndexProgressEvent(event)}\n`);
+    },
+    succeed: (message) => {
+      options.stream.write(`${message}\n`);
+    },
+    fail: (message) => {
+      options.stream.write(`${message}\n`);
+    },
+    stop: () => {},
+  };
+}
+
+export function formatIndexProgressEvent(event: IndexProgressEvent): string {
+  return [
+    progressPhaseLabels[event.phase],
+    formatProgressBar(event),
+    event.path,
+  ]
+    .filter((part) => part !== undefined && part !== "")
+    .join(" ");
+}
+
 export function isCommanderExit(error: unknown): error is CommanderError {
   return error instanceof CommanderError;
+}
+
+function createNoopProgress(): CliProgress {
+  return {
+    handle: () => {},
+    succeed: () => {},
+    fail: () => {},
+    stop: () => {},
+  };
+}
+
+function formatProgressBar(event: IndexProgressEvent): string | undefined {
+  if (event.current === undefined || event.total === undefined) {
+    return undefined;
+  }
+
+  if (event.total < 1) {
+    return `[${"░".repeat(progressBarWidth)}] 0/0`;
+  }
+
+  const current = Math.min(Math.max(event.current, 0), event.total);
+  const filled = Math.round((current / event.total) * progressBarWidth);
+  return `[${"█".repeat(filled)}${"░".repeat(progressBarWidth - filled)}] ${current}/${event.total}`;
 }
 
 function getErrorDetails(error: unknown): {

@@ -165,6 +165,59 @@ describe("GIVEN the index sync command", () => {
       });
     });
   });
+
+  describe("WHEN human output is requested", () => {
+    describe("THEN indexing progress is written to stderr", () => {
+      it("SHOULD report progress without replacing the final summary", async () => {
+        const { configPath } = await createSearchFixture("sync-progress");
+
+        const stderrOutput = await captureStderr(async (stderr) => {
+          const stdoutOutput = await captureConsoleLog(async () => {
+            await createProgram({ progressStream: stderr }).parseAsync(
+              ["node", "vaultgentic", "index", "sync", "--config", configPath],
+              { from: "node" },
+            );
+          });
+
+          expect(stdoutOutput).toContain("Indexed: 2");
+        });
+
+        expect(stderrOutput).toContain("Scanning");
+        expect(stderrOutput).toContain("Parsing/chunking");
+        expect(stderrOutput).toContain("[█████░░░░░] 1/2");
+        expect(stderrOutput).toContain("Index sync complete");
+      });
+    });
+  });
+
+  describe("WHEN JSON output is requested with a progress stream", () => {
+    describe("THEN progress output is suppressed", () => {
+      it("SHOULD keep stderr quiet so stdout remains machine-readable", async () => {
+        const { configPath } = await createSearchFixture("sync-json-progress");
+
+        const stderrOutput = await captureStderr(async (stderr) => {
+          const stdoutOutput = await captureConsoleLog(async () => {
+            await createProgram({ progressStream: stderr }).parseAsync(
+              [
+                "node",
+                "vaultgentic",
+                "index",
+                "sync",
+                "--config",
+                configPath,
+                "--json",
+              ],
+              { from: "node" },
+            );
+          });
+
+          expect(JSON.parse(stdoutOutput)).toMatchObject({ indexed: 2 });
+        });
+
+        expect(stderrOutput).toBe("");
+      });
+    });
+  });
 });
 
 describe("GIVEN the index status command", () => {
