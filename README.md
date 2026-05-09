@@ -207,6 +207,41 @@ vaultgentic search --help
 vaultgentic read --help
 ```
 
+## Release packages
+
+Vaultgentic uses Changesets to version and publish packages to GitHub Packages. The release workflow publishes:
+
+- `@vaultgentic/core`
+- `@vaultgentic/cli`
+
+`@vaultgentic/mcp-server` remains private until it is ready to publish.
+
+Create a changeset for a user-facing package change:
+
+```sh
+pnpm changeset
+```
+
+Common release maintenance commands:
+
+```sh
+pnpm version-packages
+pnpm release:dry-run
+```
+
+`pnpm release:dry-run` builds the workspace and runs pnpm's recursive publish dry run to verify package contents and registry configuration without publishing.
+
+On pushes to `main`, `.github/workflows/release.yml` runs the test/build checks, then `changesets/action` either opens or updates a version PR. Merging that version PR publishes changed packages to GitHub Packages.
+
+The workflow uses the repository `GITHUB_TOKEN`; no custom npm token is required when publishing from `Vaultgentic/vaultgentic`. Required workflow permissions are `contents: write`, `pull-requests: write`, and `packages: write`.
+
+To install packages from GitHub Packages, authenticate npm or pnpm for the `@vaultgentic` scope:
+
+```sh
+pnpm config set @vaultgentic:registry https://npm.pkg.github.com
+pnpm config set //npm.pkg.github.com/:_authToken <github-token>
+```
+
 ## Troubleshooting
 
 ### `Could not read config`
