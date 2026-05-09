@@ -358,7 +358,7 @@ describe("GIVEN the index rebuild command", () => {
           deleted: 1,
           status: {
             noteCount: 1,
-            chunkCount: 2,
+            chunkCount: 1,
             lastIndexedAt: expect.any(Number),
           },
         });
