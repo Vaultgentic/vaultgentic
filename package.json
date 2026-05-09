@@ -23,7 +23,7 @@
     "release": "pnpm build && changeset publish",
     "release:dry-run": "pnpm build && pnpm publish -r --dry-run --no-git-checks",
     "test": "turbo test",
-    "version-packages": "changeset version",
+    "version-packages": "changeset version && pnpm format",
     "prepare": "lefthook install"
   },
   "devDependencies": {
