@@ -32,6 +32,12 @@ jobs:
       - run: pnpm format:check
       - run: pnpm test
       - run: pnpm build
+      - name: Configure GitHub Packages auth
+        run: |
+          pnpm config set @vaultgentic:registry https://npm.pkg.github.com
+          pnpm config set //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: changesets/action@v1
         with:
           version: pnpm version-packages
