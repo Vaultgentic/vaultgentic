@@ -5,12 +5,34 @@ Vaultgentic is a local command-line search tool for Obsidian-style Markdown vaul
 ## Prerequisites
 
 - Node.js 24 or newer
-- pnpm 11
+- pnpm 11, when running from source or doing release maintenance
 - A folder of Markdown notes, such as an Obsidian vault
 
 Semantic and hybrid search use the `Xenova/all-MiniLM-L6-v2` embedding model. The first indexing or semantic search run may download model files through `@huggingface/transformers`.
 
-## Install and run from source
+## Install with npm
+
+Vaultgentic packages are published under the `@vaultgentic` scope on GitHub Packages. Configure npm for that scope before installing:
+
+```sh
+npm config set @vaultgentic:registry https://npm.pkg.github.com
+npm config set //npm.pkg.github.com/:_authToken "YOUR_GITHUB_TOKEN"
+```
+
+For normal terminal use, install the CLI. npm installs `@vaultgentic/core` automatically as a dependency:
+
+```sh
+npm install --global @vaultgentic/cli
+vaultgentic --help
+```
+
+Only install the core package directly when building your own app or tool against Vaultgentic's APIs:
+
+```sh
+npm install @vaultgentic/core
+```
+
+## Run from source
 
 Run the CLI from a repository checkout:
 
@@ -235,12 +257,7 @@ On pushes to `main`, `.github/workflows/release.yml` runs the test/build checks,
 
 The workflow uses the repository `GITHUB_TOKEN`; no custom npm token is required when publishing from `Vaultgentic/vaultgentic`. Required workflow permissions are `contents: write`, `pull-requests: write`, and `packages: write`.
 
-To install packages from GitHub Packages, authenticate npm or pnpm for the `@vaultgentic` scope:
-
-```sh
-pnpm config set @vaultgentic:registry https://npm.pkg.github.com
-pnpm config set //npm.pkg.github.com/:_authToken <github-token>
-```
+For package installation, see [Install with npm](#install-with-npm).
 
 ## Troubleshooting
 
