@@ -1,4 +1,5 @@
 import type { pipeline as transformersPipeline } from "@huggingface/transformers";
+import { VaultgenticError } from "./errors.js";
 
 export type EmbeddingModelMetadata = {
   modelId: string;
@@ -28,7 +29,7 @@ export const embeddingModelMetadata: EmbeddingModelMetadata = {
 
 let loadingPipeline: Promise<FeatureExtractionPipeline> | undefined;
 
-export class EmbeddingServiceError extends Error {
+export class EmbeddingServiceError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "EmbeddingServiceError";

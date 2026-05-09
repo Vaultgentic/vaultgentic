@@ -3,6 +3,7 @@ import { open, realpath, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { ConfigServiceError, resolveVaultRelativePath } from "./config.js";
+import { VaultgenticError } from "./errors.js";
 import { openSearchDatabase } from "./indexer.js";
 import type { SearchDatabaseConfig } from "./database.js";
 
@@ -49,7 +50,7 @@ export type NoteMetadata = {
   indexedAt: number;
 };
 
-export class VaultReadError extends Error {
+export class VaultReadError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "VaultReadError";

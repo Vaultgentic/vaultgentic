@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { defaultIgnoredPaths, resolveVaultRelativePath } from "./config.js";
+import { VaultgenticError } from "./errors.js";
 
 export type VaultFileMetadata = {
   path: string;
@@ -15,7 +16,7 @@ export type VaultScanConfig = {
   ignoredPaths?: string[];
 };
 
-export class VaultScannerError extends Error {
+export class VaultScannerError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "VaultScannerError";

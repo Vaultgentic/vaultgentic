@@ -24,6 +24,7 @@ import {
   embedQueryText,
   embeddingModelMetadata,
 } from "./embedding.js";
+import { VaultgenticError } from "./errors.js";
 import type { EmbeddingResult } from "./embedding.js";
 
 export type IndexFileResult = {
@@ -80,7 +81,7 @@ export type TitleSearchResult = {
   rank: number;
 };
 
-export class SearchIndexerError extends Error {
+export class SearchIndexerError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "SearchIndexerError";

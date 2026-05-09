@@ -3,11 +3,12 @@ import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import * as sqliteVec from "sqlite-vec";
 import { embeddingModelMetadata } from "./embedding.js";
+import { VaultgenticError } from "./errors.js";
 
 export const schemaVersion = 1;
 export const chunkerVersion = "1";
 
-export class SearchDatabaseError extends Error {
+export class SearchDatabaseError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "SearchDatabaseError";

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { z } from "zod";
+import { VaultgenticError } from "./errors.js";
 
 export const defaultIgnoredPaths = [
   ".obsidian",
@@ -14,7 +15,7 @@ export const defaultIgnoredPaths = [
 export const configDirectoryName = "vaultgentic";
 export const configFileName = "config.json";
 
-export class ConfigServiceError extends Error {
+export class ConfigServiceError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "ConfigServiceError";

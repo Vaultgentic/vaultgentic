@@ -22,6 +22,11 @@ import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import {
+  formatCliError,
+  isCommanderExit,
+  shouldUseColor,
+} from "./presentation.js";
 
 type KeywordSearchOutput = Bm25SearchResult & {
   matchedBy: ["keyword"];
@@ -94,6 +99,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     .name("vaultgentic")
     .description("Local Obsidian search and MCP tooling")
     .version(packageVersion)
+    .option("--debug", "Print stack traces and error causes")
     .showHelpAfterError()
     .addHelpText("after", `\nCore package: ${vaultgenticCoreName}`);
 
@@ -276,6 +282,83 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
     );
 
   return program;
+}
+
+export async function runCli(
+  argv: string[] = process.argv,
+  io: { stderr: Pick<NodeJS.WriteStream, "isTTY" | "write"> } = {
+    stderr: process.stderr,
+  },
+): Promise<number> {
+  const errorOptions = getErrorOptions(argv);
+  const commanderErrors: string[] = [];
+  const program = createProgram();
+  configureErrorHandling(program, commanderErrors);
+
+  try {
+    await program.parseAsync(argv, { from: "node" });
+    return 0;
+  } catch (error) {
+    if (isCommanderExit(error) && error.exitCode === 0) {
+      return 0;
+    }
+
+    io.stderr.write(
+      formatCliError(toCliError(error, commanderErrors), {
+        color: shouldUseColor(io.stderr),
+        debug: errorOptions.debug,
+        json: errorOptions.json,
+      }),
+    );
+
+    if (isCommanderExit(error)) {
+      return error.exitCode;
+    }
+
+    return 1;
+  }
+}
+
+function getErrorOptions(argv: string[]): { debug: boolean; json: boolean } {
+  const args = argv.slice(2);
+  const optionArgs = args.slice(
+    0,
+    args.indexOf("--") === -1 ? args.length : args.indexOf("--"),
+  );
+
+  return {
+    debug: optionArgs.includes("--debug"),
+    json: optionArgs.includes("--json"),
+  };
+}
+
+function configureErrorHandling(
+  command: Command,
+  commanderErrors: string[],
+): void {
+  command.exitOverride();
+  command.configureOutput({
+    writeErr: (message) => {
+      commanderErrors.push(message);
+    },
+  });
+
+  for (const childCommand of command.commands) {
+    configureErrorHandling(childCommand, commanderErrors);
+  }
+}
+
+function toCliError(error: unknown, commanderErrors: string[]): unknown {
+  const commanderMessage = commanderErrors
+    .join("")
+    .replace(/^error:\s*/i, "")
+    .trim();
+
+  if (commanderMessage !== "") {
+    return new InvalidArgumentError(commanderMessage);
+  }
+
+  return error;
 }
 
 function parseSearchMode(mode: string): SearchMode {
@@ -599,5 +682,7 @@ async function promptIndexRebuild(): Promise<boolean> {
 }
 
 if (isMainModule(import.meta.url, process.argv[1])) {
-  createProgram().parse();
+  runCli().then((exitCode) => {
+    process.exitCode = exitCode;
+  });
 }

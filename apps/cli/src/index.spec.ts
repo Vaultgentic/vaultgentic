@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { openSearchDatabase } from "@vaultgentic/core";
-import { createProgram, isMainModule, packageVersion } from "./index.js";
+import {
+  createProgram,
+  isMainModule,
+  packageVersion,
+  runCli,
+} from "./index.js";
 
 describe("GIVEN the CLI package", () => {
   describe("WHEN creating the Commander program", () => {
@@ -919,6 +924,145 @@ describe("GIVEN the read command", () => {
   });
 });
 
+describe("GIVEN the CLI error runner", () => {
+  describe("WHEN an expected command error is raised", () => {
+    describe("THEN a pretty human error is printed", () => {
+      it("SHOULD NOT print a stack trace by default", async () => {
+        const output = await captureStderr(async (stderr) => {
+          const exitCode = await runCli(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "status",
+              "--config",
+              "missing-config.json",
+            ],
+            { stderr },
+          );
+
+          expect(exitCode).toBe(1);
+        });
+
+        expect(output).toContain("Error: Could not read config");
+        expect(output).toContain("Pass --config <path>");
+        expect(output).not.toContain("ConfigServiceError");
+        expect(output).not.toContain("\n    at ");
+      });
+    });
+  });
+
+  describe("WITH JSON output", () => {
+    describe("WHEN an expected command error is raised", () => {
+      describe("THEN a structured error is printed", () => {
+        it("SHOULD preserve machine-readable output", async () => {
+          const output = await captureStderr(async (stderr) => {
+            const exitCode = await runCli(
+              [
+                "node",
+                "vaultgentic",
+                "index",
+                "status",
+                "--config",
+                "missing-config.json",
+                "--json",
+              ],
+              { stderr },
+            );
+
+            expect(exitCode).toBe(1);
+          });
+
+          expect(JSON.parse(output)).toMatchObject({
+            error: {
+              name: "ConfigServiceError",
+              message: expect.stringContaining("Could not read config"),
+              expected: true,
+            },
+          });
+          expect(JSON.parse(output).error.stack).toBeUndefined();
+        });
+      });
+    });
+  });
+
+  describe("WHEN JSON is provided after the option terminator", () => {
+    describe("THEN it is not treated as an output flag", () => {
+      it("SHOULD print a human error", async () => {
+        const output = await captureStderr(async (stderr) => {
+          const exitCode = await runCli(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "status",
+              "--config",
+              "missing-config.json",
+              "--",
+              "--json",
+            ],
+            { stderr },
+          );
+
+          expect(exitCode).toBe(1);
+        });
+
+        expect(output).toContain("Error: Could not read config");
+        expect(() => JSON.parse(output)).toThrow();
+      });
+    });
+  });
+
+  describe("WITH debug enabled", () => {
+    describe("WHEN an expected command error is raised", () => {
+      describe("THEN debug details are printed", () => {
+        it("SHOULD include stack traces", async () => {
+          const output = await captureStderr(async (stderr) => {
+            const exitCode = await runCli(
+              [
+                "node",
+                "vaultgentic",
+                "--debug",
+                "index",
+                "status",
+                "--config",
+                "missing-config.json",
+              ],
+              { stderr },
+            );
+
+            expect(exitCode).toBe(1);
+          });
+
+          expect(output).toContain("Debug details:");
+          expect(output).toContain("ConfigServiceError");
+          expect(output).toContain("Cause:");
+        });
+      });
+    });
+  });
+
+  describe("WHEN a Commander argument error is raised", () => {
+    describe("THEN the captured parser message is printed", () => {
+      it("SHOULD include the invalid option context", async () => {
+        const output = await captureStderr(async (stderr) => {
+          const exitCode = await runCli(
+            ["node", "vaultgentic", "search", "sqlite-vec", "--mode", "bogus"],
+            { stderr },
+          );
+
+          expect(exitCode).toBe(1);
+        });
+
+        expect(output).toContain(
+          "Error: option '--mode <mode>' argument 'bogus' is invalid",
+        );
+        expect(output).toContain("Unsupported search mode: bogus");
+      });
+    });
+  });
+});
+
 async function createSearchFixture(name: string): Promise<{
   configPath: string;
   databasePath: string;
@@ -990,4 +1134,23 @@ async function captureConsoleLog(
   }
 
   return output.join("\n");
+}
+
+async function captureStderr(
+  callback: (
+    stderr: Pick<NodeJS.WriteStream, "isTTY" | "write">,
+  ) => Promise<void>,
+): Promise<string> {
+  let output = "";
+  const stderr = {
+    isTTY: false,
+    write: (chunk: string | Uint8Array) => {
+      output += String(chunk);
+      return true;
+    },
+  };
+
+  await callback(stderr);
+
+  return output;
 }

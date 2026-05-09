@@ -1,5 +1,7 @@
 export const vaultgenticCoreName = "vaultgentic-core";
 
+export { VaultgenticError } from "./errors.js";
+
 export {
   initializeSearchDatabase,
   SearchDatabaseError,
