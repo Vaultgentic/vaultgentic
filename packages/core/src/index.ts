@@ -16,3 +16,9 @@ export {
   resolveVaultPath,
   resolveVaultRelativePath,
 } from "./config.js";
+
+export {
+  scanVaultFiles,
+  type VaultFileMetadata,
+  type VaultScanConfig,
+} from "./scanner.js";

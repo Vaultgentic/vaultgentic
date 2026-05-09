@@ -13,6 +13,10 @@
     "./config": {
       "types": "./dist/config.d.ts",
       "default": "./dist/config.js"
+    },
+    "./scanner": {
+      "types": "./dist/scanner.d.ts",
+      "default": "./dist/scanner.js"
     }
   },
   "scripts": {
