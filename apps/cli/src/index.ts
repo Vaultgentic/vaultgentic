@@ -382,6 +382,10 @@ function formatStatus(status: DatabaseStatus): string {
     `Foreign keys enabled: ${status.sqlite.foreignKeysEnabled ? "yes" : "no"}`,
     `FTS5 available: ${status.sqlite.fts5Available ? "yes" : "no"}`,
     `sqlite-vec available: ${status.sqlite.sqliteVecAvailable ? "yes" : "no"}`,
+    `Vector storage ready: ${status.vectors.ready ? "yes" : "no"}`,
+    `Vector rows: ${status.vectors.chunkEmbeddingCount}`,
+    `Embedding model: ${status.vectors.modelId}`,
+    `Embedding dimension: ${status.vectors.dimension}`,
   ].join("\n");
 }
 

@@ -2,8 +2,8 @@ import Database from "better-sqlite3";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { initializeSearchDatabase } from "./database.js";
+import { describe, expect, it, vi } from "vitest";
+import { initializeSearchDatabase, loadSqliteVec } from "./database.js";
 import {
   indexVaultFile,
   rebuildSearchIndex,
@@ -12,6 +12,21 @@ import {
   searchTitles,
   syncSearchIndex,
 } from "./indexer.js";
+
+vi.mock("./embedding.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./embedding.js")>();
+
+  return {
+    ...original,
+    embedChunkText: vi.fn(async (text: string) => ({
+      vector: Array.from(
+        { length: original.embeddingModelMetadata.dimension },
+        () => text.length / 100,
+      ),
+      metadata: original.embeddingModelMetadata,
+    })),
+  };
+});
 
 describe("GIVEN a BM25 search index", () => {
   describe("WHEN a single markdown file is indexed", () => {
@@ -34,6 +49,7 @@ describe("GIVEN a BM25 search index", () => {
           notes: 1,
           chunks: 1,
           fts: 1,
+          vectors: 1,
         });
       });
     });
@@ -84,6 +100,7 @@ describe("GIVEN a BM25 search index", () => {
           notes: 1,
           chunks: 1,
           fts: 1,
+          vectors: 1,
         });
       });
     });
@@ -112,14 +129,15 @@ describe("GIVEN a BM25 search index", () => {
           notes: 1,
           chunks: 1,
           fts: 1,
+          vectors: 1,
         });
       });
     });
   });
 
   describe("WHEN an indexed file changes", () => {
-    describe("THEN old FTS rows are replaced", () => {
-      it("SHOULD remove stale searchable terms", async () => {
+    describe("THEN old FTS and vector rows are replaced", () => {
+      it("SHOULD remove stale searchable terms and embeddings", async () => {
         const config = await createFixture("reindex-file");
         const filePath = path.join(config.vaultPath, "alpha.md");
         await writeFile(filePath, "# Alpha\n\nThe oldterm is here.");
@@ -130,13 +148,18 @@ describe("GIVEN a BM25 search index", () => {
 
         expect(searchBm25(config, { query: "oldterm" })).toEqual([]);
         expect(searchBm25(config, { query: "newterm" })).toHaveLength(1);
+        expect(readCounts(config.databasePath)).toMatchObject({
+          notes: 1,
+          chunks: 1,
+          vectors: 1,
+        });
       });
     });
   });
 
   describe("WHEN the vault is synced after deletion", () => {
     describe("THEN missing files are removed from the index", () => {
-      it("SHOULD delete note chunks and FTS rows", async () => {
+      it("SHOULD delete note chunks, FTS rows, and vector rows", async () => {
         const config = await createFixture("delete-file");
         const filePath = path.join(config.vaultPath, "alpha.md");
         await writeFile(filePath, "# Alpha\n\nDelete me keyword.");
@@ -150,6 +173,7 @@ describe("GIVEN a BM25 search index", () => {
           notes: 0,
           chunks: 0,
           fts: 0,
+          vectors: 0,
         });
       });
     });
@@ -189,6 +213,7 @@ describe("GIVEN a BM25 search index", () => {
           notes: 1,
           chunks: 1,
           fts: 1,
+          vectors: 1,
         });
       });
     });
@@ -215,6 +240,56 @@ describe("GIVEN a BM25 search index", () => {
         expect(result.status.chunkCount).toBe(2);
         expect(searchBm25(config, { query: "keyword-one" })).toHaveLength(1);
         expect(searchBm25(config, { query: "keyword-two" })).toHaveLength(1);
+      });
+    });
+  });
+
+  describe("WHEN the index is rebuilt after embedding metadata changes", () => {
+    describe("THEN stale vector storage is recreated", () => {
+      it("SHOULD replace the old vector table before writing embeddings", async () => {
+        const config = await createFixture("rebuild-stale-vector-table");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Alpha\n\nThe rebuilt vector should fit the current model.",
+        );
+        createStaleVectorTable(config.databasePath);
+
+        const result = await rebuildSearchIndex(config);
+
+        expect(result.status.vectors).toMatchObject({
+          ready: true,
+          chunkEmbeddingCount: 1,
+          dimension: 384,
+        });
+        expect(readCounts(config.databasePath).vectors).toBe(1);
+      });
+    });
+  });
+
+  describe("WHEN an unchanged file is missing vector rows", () => {
+    describe("THEN the embedding index is backfilled", () => {
+      it("SHOULD restore vector storage without duplicating chunks", async () => {
+        const config = await createFixture("backfill-vectors");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Alpha\n\nThe semantic vector should be restored.",
+        );
+        await indexVaultFile(config, "alpha.md");
+        deleteVectorRows(config.databasePath);
+
+        const result = await indexVaultFile(config, "alpha.md");
+
+        expect(result).toEqual({
+          path: "alpha.md",
+          status: "indexed",
+          chunkCount: 1,
+        });
+        expect(readCounts(config.databasePath)).toEqual({
+          notes: 1,
+          chunks: 1,
+          fts: 1,
+          vectors: 1,
+        });
       });
     });
   });
@@ -392,13 +467,16 @@ function readCounts(databasePath: string): {
   notes: number;
   chunks: number;
   fts: number;
+  vectors: number;
 } {
   const database = new Database(databasePath, { readonly: true });
   try {
+    loadSqliteVec(database);
     return {
       notes: readCount(database, "notes"),
       chunks: readCount(database, "chunks"),
       fts: readCount(database, "chunks_fts"),
+      vectors: readCount(database, "chunk_embeddings"),
     };
   } finally {
     database.close();
@@ -416,6 +494,32 @@ function deleteFtsRows(databasePath: string): void {
   const database = new Database(databasePath);
   try {
     database.prepare("DELETE FROM chunks_fts").run();
+  } finally {
+    database.close();
+  }
+}
+
+function deleteVectorRows(databasePath: string): void {
+  const database = new Database(databasePath);
+  try {
+    loadSqliteVec(database);
+    database.prepare("DELETE FROM chunk_embeddings").run();
+  } finally {
+    database.close();
+  }
+}
+
+function createStaleVectorTable(databasePath: string): void {
+  const database = new Database(databasePath);
+  try {
+    loadSqliteVec(database);
+    database.exec(`
+      DROP TABLE chunk_embeddings;
+      CREATE VIRTUAL TABLE chunk_embeddings USING vec0(embedding float[4]);
+    `);
+    database
+      .prepare("UPDATE index_metadata SET value = ? WHERE key = ?")
+      .run("4", "embedding_dimension");
   } finally {
     database.close();
   }

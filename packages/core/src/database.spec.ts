@@ -32,6 +32,14 @@ describe("GIVEN SQLite search database initialization", () => {
             walEnabled: true,
             foreignKeysEnabled: true,
           },
+          vectors: {
+            ready: status.sqlite.sqliteVecAvailable,
+            chunkEmbeddingCount: 0,
+            modelId: "Xenova/all-MiniLM-L6-v2",
+            dimension: 384,
+            normalized: true,
+            chunkerVersion: "1",
+          },
         });
 
         const database = new Database(databasePath, { readonly: true });
@@ -40,16 +48,19 @@ describe("GIVEN SQLite search database initialization", () => {
           if (status.sqlite.fts5Available) {
             expectedTables.push("chunks_fts");
           }
+          if (status.sqlite.sqliteVecAvailable) {
+            expectedTables.push("chunk_embeddings");
+          }
           expect(readTableNames(database)).toEqual(
             expect.arrayContaining(expectedTables),
           );
           expect(readMetadata(database)).toMatchObject({
             schema_version: String(schemaVersion),
             vault_root: vaultPath,
-            embedding_model_id: "",
-            embedding_dimension: "",
-            embedding_normalized: "",
-            chunker_version: "",
+            embedding_model_id: "Xenova/all-MiniLM-L6-v2",
+            embedding_dimension: "384",
+            embedding_normalized: "true",
+            chunker_version: "1",
           });
         } finally {
           database.close();
@@ -129,6 +140,34 @@ describe("GIVEN SQLite search database initialization", () => {
         expect(() =>
           initializeSearchDatabase({ vaultPath, databasePath }),
         ).toThrow("Unsupported database schema version");
+      });
+    });
+  });
+
+  describe("WHEN existing embedding metadata does not match", () => {
+    describe("THEN initialization reports that a full reindex is required", () => {
+      it("SHOULD reject the stale vector metadata", async () => {
+        const cwd = await mkdtemp(
+          path.join(tmpdir(), "vaultgentic-db-bad-vector-metadata-"),
+        );
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, ".vaultgentic", "index.sqlite");
+        await mkdir(vaultPath);
+
+        initializeSearchDatabase({ vaultPath, databasePath });
+
+        const database = new Database(databasePath);
+        try {
+          database
+            .prepare("UPDATE index_metadata SET value = ? WHERE key = ?")
+            .run("999", "embedding_dimension");
+        } finally {
+          database.close();
+        }
+
+        expect(() =>
+          initializeSearchDatabase({ vaultPath, databasePath }),
+        ).toThrow("full reindex required");
       });
     });
   });

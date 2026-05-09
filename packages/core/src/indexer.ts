@@ -11,11 +11,16 @@ import {
 } from "./markdown.js";
 import { scanVaultFiles, type VaultFileMetadata } from "./scanner.js";
 import {
+  chunkerVersion,
   initializeSearchDatabase,
+  loadSqliteVec,
+  resetEmbeddingStorage,
   schemaVersion,
   type DatabaseStatus,
   type SearchDatabaseConfig,
 } from "./database.js";
+import { embedChunkText, embeddingModelMetadata } from "./embedding.js";
+import type { EmbeddingResult } from "./embedding.js";
 
 export type IndexFileResult = {
   path: string;
@@ -98,17 +103,34 @@ type FtsChunkRow = {
   text: string;
 };
 
+type VectorChunkRow = {
+  id: number;
+  text: string;
+};
+
 type PreparedIndexedFile = {
   metadata: VaultFileMetadata & { content_hash: string };
   note: ParsedMarkdownNote;
-  chunks: MarkdownChunk[];
+  chunks: PreparedMarkdownChunk[];
+};
+
+type PreparedMarkdownChunk = {
+  chunk: MarkdownChunk;
+  embedding: EmbeddingResult;
+};
+
+type WrittenChunkEmbedding = {
+  chunkId: bigint;
+  embedding: EmbeddingResult;
 };
 
 export function openSearchDatabase(
   config: SearchDatabaseConfig,
+  options: { skipEmbeddingMetadataValidation?: boolean } = {},
 ): Database.Database {
-  initializeSearchDatabase(config);
+  initializeSearchDatabase(config, options);
   const database = new Database(config.databasePath);
+  loadSqliteVec(database);
   database.pragma("foreign_keys = ON");
   return database;
 }
@@ -133,7 +155,7 @@ export async function indexVaultFile(
 
     const database = openSearchDatabase(config);
     try {
-      return indexFileContent(database, metadata, content);
+      return await indexFileContent(database, metadata, content);
     } finally {
       database.close();
     }
@@ -186,7 +208,7 @@ export async function syncSearchIndex(
         );
       }
 
-      const currentResult = indexCurrentFile(database, {
+      const currentResult = await indexCurrentFile(database, {
         ...file,
         content_hash: file.content_hash,
       });
@@ -204,7 +226,7 @@ export async function syncSearchIndex(
         path.join(config.vaultPath, file.path),
         "utf8",
       );
-      const fileResult = indexFileContent(
+      const fileResult = await indexFileContent(
         database,
         { ...file, content_hash: file.content_hash },
         content,
@@ -253,14 +275,16 @@ export async function rebuildSearchIndex(
         "utf8",
       );
       preparedFiles.push(
-        prepareFileContent(
+        await prepareFileContent(
           { ...file, content_hash: file.content_hash },
           content,
         ),
       );
     }
 
-    database = openSearchDatabase(config);
+    database = openSearchDatabase(config, {
+      skipEmbeddingMetadataValidation: true,
+    });
     const activeDatabase = database;
     ensureFtsTable(activeDatabase);
     const currentPaths = new Set(files.map((file) => file.path));
@@ -271,10 +295,16 @@ export async function rebuildSearchIndex(
     const indexedFiles: IndexFileResult[] = [];
 
     activeDatabase.transaction(() => {
+      resetEmbeddingStorage(activeDatabase);
       clearIndexedContent(activeDatabase);
 
       for (const preparedFile of preparedFiles) {
-        writePreparedFile(activeDatabase, preparedFile, now);
+        const writtenChunks = writePreparedFile(
+          activeDatabase,
+          preparedFile,
+          now,
+        );
+        writeChunkEmbeddings(activeDatabase, writtenChunks);
         indexedFiles.push({
           path: preparedFile.metadata.path,
           status: "indexed",
@@ -429,27 +459,29 @@ function toSearchIndexerError(
   });
 }
 
-function indexFileContent(
+async function indexFileContent(
   database: Database.Database,
   metadata: VaultFileMetadata & { content_hash: string },
   content: string,
-): IndexFileResult {
+): Promise<IndexFileResult> {
   const existing = readExistingNote(database, metadata.path);
 
   if (isExistingNoteCurrent(existing, metadata)) {
-    const currentResult = indexCurrentFile(database, metadata);
+    const currentResult = await indexCurrentFile(database, metadata);
     if (currentResult !== undefined) {
       return currentResult;
     }
   }
 
   ensureFtsTable(database);
-  const preparedFile = prepareFileContent(metadata, content);
+  ensureVectorTable(database);
+  const preparedFile = await prepareFileContent(metadata, content);
   const now = Date.now();
 
   database.transaction(() => {
     deleteIndexedPath(database, metadata.path);
-    writePreparedFile(database, preparedFile, now);
+    const writtenChunks = writePreparedFile(database, preparedFile, now);
+    writeChunkEmbeddings(database, writtenChunks);
   })();
 
   return {
@@ -459,15 +491,22 @@ function indexFileContent(
   };
 }
 
-function prepareFileContent(
+async function prepareFileContent(
   metadata: VaultFileMetadata & { content_hash: string },
   content: string,
-): PreparedIndexedFile {
+): Promise<PreparedIndexedFile> {
   const note = parseMarkdownNote({ path: metadata.path, content });
+  const chunks = await Promise.all(
+    chunkMarkdownNote(note).map(async (chunk) => ({
+      chunk,
+      embedding: await embedChunkText(chunk.text),
+    })),
+  );
+
   return {
     metadata,
     note,
-    chunks: chunkMarkdownNote(note),
+    chunks,
   };
 }
 
@@ -475,8 +514,9 @@ function writePreparedFile(
   database: Database.Database,
   preparedFile: PreparedIndexedFile,
   now: number,
-): void {
+): WrittenChunkEmbedding[] {
   const { metadata, note, chunks } = preparedFile;
+  const writtenChunks: WrittenChunkEmbedding[] = [];
   const noteResult = database
     .prepare(
       `
@@ -521,7 +561,8 @@ function writePreparedFile(
   );
   insertNoteFts.run(noteId, note.path, note.title, note.aliases.join(" "));
 
-  for (const chunk of chunks) {
+  for (const preparedChunk of chunks) {
+    const { chunk, embedding } = preparedChunk;
     const headingPath = chunk.headingPath.join(" / ");
     const chunkResult = insertChunk.run(
       noteId,
@@ -543,13 +584,19 @@ function writePreparedFile(
       headingPath,
       chunk.text,
     );
+    writtenChunks.push({
+      chunkId: BigInt(chunkResult.lastInsertRowid),
+      embedding,
+    });
   }
+
+  return writtenChunks;
 }
 
-function indexCurrentFile(
+async function indexCurrentFile(
   database: Database.Database,
   metadata: VaultFileMetadata & { content_hash: string },
-): IndexFileResult | undefined {
+): Promise<IndexFileResult | undefined> {
   const existing = readExistingNote(database, metadata.path);
   if (!isExistingNoteCurrent(existing, metadata)) {
     return undefined;
@@ -558,15 +605,22 @@ function indexCurrentFile(
   const chunkCount = readChunkCount(database, metadata.path);
   if (
     readFtsCount(database, metadata.path) === chunkCount &&
-    readTitleFtsCount(database, metadata.path) === 1
+    readTitleFtsCount(database, metadata.path) === 1 &&
+    readVectorCount(database, metadata.path) === chunkCount
   ) {
     return { path: metadata.path, status: "skipped", chunkCount };
   }
 
   ensureFtsTable(database);
   ensureTitleFtsTable(database);
+  ensureVectorTable(database);
+  const vectorChunks = await prepareExistingChunkEmbeddings(
+    database,
+    metadata.path,
+  );
   backfillTitleFtsRow(database, metadata.path);
   backfillFtsRows(database, metadata.path);
+  writeChunkEmbeddings(database, vectorChunks);
   return { path: metadata.path, status: "indexed", chunkCount };
 }
 
@@ -611,16 +665,23 @@ function deleteIndexedPath(
     "DELETE FROM notes_fts WHERE rowid = ?",
   );
   const deleteFts = database.prepare("DELETE FROM chunks_fts WHERE rowid = ?");
+  const deleteVector = hasTable(database, "chunk_embeddings")
+    ? database.prepare("DELETE FROM chunk_embeddings WHERE rowid = ?")
+    : undefined;
   for (const note of noteIds) {
     deleteNoteFts.run(note.id);
   }
   for (const chunk of chunkIds) {
     deleteFts.run(chunk.id);
+    deleteVector?.run(BigInt(chunk.id));
   }
   database.prepare("DELETE FROM notes WHERE path = ?").run(indexedPath);
 }
 
 function clearIndexedContent(database: Database.Database): void {
+  if (hasTable(database, "chunk_embeddings")) {
+    database.prepare("DELETE FROM chunk_embeddings").run();
+  }
   database.prepare("DELETE FROM notes_fts").run();
   database.prepare("DELETE FROM chunks_fts").run();
   database.prepare("DELETE FROM chunks").run();
@@ -631,6 +692,8 @@ function readDatabaseStatus(
   database: Database.Database,
   config: SearchDatabaseConfig,
 ): DatabaseStatus {
+  const sqliteVecAvailable = isSqliteVecAvailable(database);
+
   return {
     vaultPath: config.vaultPath,
     databasePath: config.databasePath,
@@ -643,7 +706,15 @@ function readDatabaseStatus(
       walEnabled: readJournalMode(database) === "wal",
       foreignKeysEnabled: readForeignKeys(database),
       fts5Available: true,
-      sqliteVecAvailable: isSqliteVecAvailable(database),
+      sqliteVecAvailable,
+    },
+    vectors: {
+      ready: sqliteVecAvailable && hasTable(database, "chunk_embeddings"),
+      chunkEmbeddingCount: readVectorCount(database),
+      modelId: embeddingModelMetadata.modelId,
+      dimension: embeddingModelMetadata.dimension,
+      normalized: embeddingModelMetadata.normalized,
+      chunkerVersion,
     },
   };
 }
@@ -661,6 +732,34 @@ function readChunkCount(
 ): number {
   const row = database
     .prepare("SELECT COUNT(*) AS count FROM chunks WHERE path = ?")
+    .get(indexedPath) as { count: number };
+  return row.count;
+}
+
+function readVectorCount(
+  database: Database.Database,
+  indexedPath?: string,
+): number {
+  if (!hasTable(database, "chunk_embeddings")) {
+    return 0;
+  }
+
+  if (indexedPath === undefined) {
+    const row = database
+      .prepare("SELECT COUNT(*) AS count FROM chunk_embeddings")
+      .get() as { count: number };
+    return row.count;
+  }
+
+  const row = database
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM chunk_embeddings
+        JOIN chunks c ON c.id = chunk_embeddings.rowid
+        WHERE c.path = ?
+      `,
+    )
     .get(indexedPath) as { count: number };
   return row.count;
 }
@@ -698,6 +797,86 @@ function isSqliteVecAvailable(database: Database.Database): boolean {
   } catch {
     return false;
   }
+}
+
+function ensureVectorTable(database: Database.Database): void {
+  if (
+    isSqliteVecAvailable(database) &&
+    hasTable(database, "chunk_embeddings")
+  ) {
+    return;
+  }
+
+  throw new SearchIndexerError(
+    "sqlite-vec is not available for chunk embedding storage",
+  );
+}
+
+async function prepareExistingChunkEmbeddings(
+  database: Database.Database,
+  indexedPath: string,
+): Promise<WrittenChunkEmbedding[]> {
+  const chunks = database
+    .prepare(
+      `
+        SELECT id, text
+        FROM chunks
+        WHERE path = ?
+        ORDER BY chunk_index
+      `,
+    )
+    .all(indexedPath) as VectorChunkRow[];
+
+  return await Promise.all(
+    chunks.map(async (chunk) => ({
+      chunkId: BigInt(chunk.id),
+      embedding: await embedChunkText(chunk.text),
+    })),
+  );
+}
+
+function writeChunkEmbeddings(
+  database: Database.Database,
+  chunks: WrittenChunkEmbedding[],
+): void {
+  ensureVectorTable(database);
+  const deleteEmbedding = database.prepare(
+    "DELETE FROM chunk_embeddings WHERE rowid = ?",
+  );
+  const insertEmbedding = database.prepare(
+    "INSERT INTO chunk_embeddings(rowid, embedding) VALUES (?, ?)",
+  );
+
+  for (const chunk of chunks) {
+    validateEmbeddingMetadata(chunk.embedding);
+    deleteEmbedding.run(chunk.chunkId);
+    insertEmbedding.run(chunk.chunkId, toVectorBuffer(chunk.embedding.vector));
+  }
+}
+
+function validateEmbeddingMetadata(embedding: EmbeddingResult): void {
+  if (
+    embedding.metadata.modelId !== embeddingModelMetadata.modelId ||
+    embedding.metadata.dimension !== embeddingModelMetadata.dimension ||
+    embedding.metadata.normalized !== embeddingModelMetadata.normalized ||
+    embedding.vector.length !== embeddingModelMetadata.dimension
+  ) {
+    throw new SearchIndexerError(
+      "Embedding metadata does not match the configured sqlite-vec table; full reindex required",
+    );
+  }
+}
+
+function toVectorBuffer(vector: number[]): Buffer {
+  return Buffer.from(new Float32Array(vector).buffer);
+}
+
+function hasTable(database: Database.Database, tableName: string): boolean {
+  const row = database
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName);
+
+  return row !== undefined;
 }
 
 function readFtsCount(

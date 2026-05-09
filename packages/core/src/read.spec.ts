@@ -2,10 +2,25 @@ import Database from "better-sqlite3";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { initializeSearchDatabase } from "./database.js";
 import { indexVaultFile } from "./indexer.js";
 import { readVaultTarget, VaultReadError } from "./read.js";
+
+vi.mock("./embedding.js", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./embedding.js")>();
+
+  return {
+    ...original,
+    embedChunkText: vi.fn(async (text: string) => ({
+      vector: Array.from(
+        { length: original.embeddingModelMetadata.dimension },
+        () => text.length / 100,
+      ),
+      metadata: original.embeddingModelMetadata,
+    })),
+  };
+});
 
 describe("GIVEN a vault read service", () => {
   describe("WHEN a vault-relative note path is requested", () => {

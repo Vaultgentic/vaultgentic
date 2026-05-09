@@ -1,8 +1,11 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
+import * as sqliteVec from "sqlite-vec";
+import { embeddingModelMetadata } from "./embedding.js";
 
 export const schemaVersion = 1;
+export const chunkerVersion = "1";
 
 export class SearchDatabaseError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -31,10 +34,23 @@ export type DatabaseStatus = {
     fts5Available: boolean;
     sqliteVecAvailable: boolean;
   };
+  vectors: {
+    ready: boolean;
+    chunkEmbeddingCount: number;
+    modelId: string;
+    dimension: number;
+    normalized: boolean;
+    chunkerVersion: string;
+  };
+};
+
+type InitializeSearchDatabaseOptions = {
+  skipEmbeddingMetadataValidation?: boolean;
 };
 
 export function initializeSearchDatabase(
   config: SearchDatabaseConfig,
+  options: InitializeSearchDatabaseOptions = {},
 ): DatabaseStatus {
   let database: Database.Database | undefined;
 
@@ -48,6 +64,8 @@ export function initializeSearchDatabase(
     if (databaseExists) {
       validateExistingDatabase(activeDatabase, config);
     }
+
+    const sqliteVecAvailable = loadSqliteVec(activeDatabase);
 
     activeDatabase.pragma("journal_mode = WAL");
     activeDatabase.pragma("synchronous = NORMAL");
@@ -112,15 +130,25 @@ export function initializeSearchDatabase(
         `);
       }
 
+      if (sqliteVecAvailable) {
+        createChunkEmbeddingTable(activeDatabase);
+      }
+
       const insertMetadata = activeDatabase.prepare(
         "INSERT OR IGNORE INTO index_metadata (key, value) VALUES (?, ?)",
       );
       insertMetadata.run("schema_version", String(schemaVersion));
       insertMetadata.run("vault_root", config.vaultPath);
-      insertMetadata.run("embedding_model_id", "");
-      insertMetadata.run("embedding_dimension", "");
-      insertMetadata.run("embedding_normalized", "");
-      insertMetadata.run("chunker_version", "");
+      insertMetadata.run("embedding_model_id", embeddingModelMetadata.modelId);
+      insertMetadata.run(
+        "embedding_dimension",
+        String(embeddingModelMetadata.dimension),
+      );
+      insertMetadata.run(
+        "embedding_normalized",
+        String(embeddingModelMetadata.normalized),
+      );
+      insertMetadata.run("chunker_version", chunkerVersion);
     })();
 
     const storedSchemaVersion = Number(
@@ -139,6 +167,10 @@ export function initializeSearchDatabase(
       );
     }
 
+    if (options.skipEmbeddingMetadataValidation !== true) {
+      validateEmbeddingMetadata(activeDatabase);
+    }
+
     return {
       vaultPath: config.vaultPath,
       databasePath: config.databasePath,
@@ -151,13 +183,46 @@ export function initializeSearchDatabase(
         walEnabled: readJournalMode(activeDatabase) === "wal",
         foreignKeysEnabled: readForeignKeys(activeDatabase),
         fts5Available: isFts5Available(activeDatabase),
-        sqliteVecAvailable: isSqliteVecAvailable(activeDatabase),
+        sqliteVecAvailable,
+      },
+      vectors: {
+        ready:
+          sqliteVecAvailable && hasTable(activeDatabase, "chunk_embeddings"),
+        chunkEmbeddingCount: sqliteVecAvailable
+          ? readVectorCount(activeDatabase)
+          : 0,
+        modelId: embeddingModelMetadata.modelId,
+        dimension: embeddingModelMetadata.dimension,
+        normalized: embeddingModelMetadata.normalized,
+        chunkerVersion,
       },
     };
   } catch (error) {
     throw toSearchDatabaseError("Failed to initialize search database", error);
   } finally {
     database?.close();
+  }
+}
+
+export function resetEmbeddingStorage(database: Database.Database): void {
+  if (!isSqliteVecAvailable(database)) {
+    throw new SearchDatabaseError(
+      "sqlite-vec is not available for chunk embedding storage",
+    );
+  }
+
+  database.exec("DROP TABLE IF EXISTS chunk_embeddings");
+  createChunkEmbeddingTable(database);
+  writeEmbeddingMetadata(database);
+}
+
+export function loadSqliteVec(database: Database.Database): boolean {
+  try {
+    sqliteVec.load(database);
+    database.prepare("SELECT vec_version() AS version").get();
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -205,6 +270,48 @@ function validateExistingDatabase(
   }
 }
 
+function writeEmbeddingMetadata(database: Database.Database): void {
+  const updateMetadata = database.prepare(
+    "UPDATE index_metadata SET value = ? WHERE key = ?",
+  );
+  updateMetadata.run(embeddingModelMetadata.modelId, "embedding_model_id");
+  updateMetadata.run(
+    String(embeddingModelMetadata.dimension),
+    "embedding_dimension",
+  );
+  updateMetadata.run(
+    String(embeddingModelMetadata.normalized),
+    "embedding_normalized",
+  );
+  updateMetadata.run(chunkerVersion, "chunker_version");
+}
+
+function createChunkEmbeddingTable(database: Database.Database): void {
+  database.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS chunk_embeddings USING vec0(
+      embedding float[${embeddingModelMetadata.dimension}]
+    );
+  `);
+}
+
+function validateEmbeddingMetadata(database: Database.Database): void {
+  const expectedMetadata = {
+    embedding_model_id: embeddingModelMetadata.modelId,
+    embedding_dimension: String(embeddingModelMetadata.dimension),
+    embedding_normalized: String(embeddingModelMetadata.normalized),
+    chunker_version: chunkerVersion,
+  };
+
+  for (const [key, expectedValue] of Object.entries(expectedMetadata)) {
+    const value = readMetadata(database, key);
+    if (value !== expectedValue) {
+      throw new SearchDatabaseError(
+        `Embedding metadata mismatch for ${key}: ${value} does not match ${expectedValue}; full reindex required`,
+      );
+    }
+  }
+}
+
 function hasTable(database: Database.Database, tableName: string): boolean {
   const row = database
     .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
@@ -231,6 +338,18 @@ function readCount(database: Database.Database, tableName: "notes" | "chunks") {
     .get() as {
     count: number;
   };
+
+  return row.count;
+}
+
+function readVectorCount(database: Database.Database): number {
+  if (!hasTable(database, "chunk_embeddings")) {
+    return 0;
+  }
+
+  const row = database
+    .prepare("SELECT COUNT(*) AS count FROM chunk_embeddings")
+    .get() as { count: number };
 
   return row.count;
 }
