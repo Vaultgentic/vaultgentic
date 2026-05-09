@@ -41,3 +41,12 @@ export {
   type IndexFileResult,
   type SyncSearchIndexResult,
 } from "./indexer.js";
+
+export {
+  readVaultTarget,
+  type NoteMetadata,
+  type ReadVaultChunkResult,
+  type ReadVaultNoteResult,
+  type ReadVaultTargetOptions,
+  type ReadVaultTargetResult,
+} from "./read.js";

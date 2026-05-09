@@ -4,11 +4,13 @@ import {
   indexVaultFile,
   initializeSearchDatabase,
   loadConfig,
+  readVaultTarget,
   searchBm25,
   syncSearchIndex,
   vaultgenticCoreName,
   type Bm25SearchResult,
   type DatabaseStatus,
+  type ReadVaultTargetResult,
 } from "@vaultgentic/core";
 import { createRequire } from "node:module";
 
@@ -127,6 +129,46 @@ export function createProgram(): Command {
       },
     );
 
+  program
+    .command("read")
+    .argument("<target>", "Vault-relative .md note path or numeric chunk id")
+    .description("Read a vault note or indexed chunk")
+    .option("--config <path>", "Path to config file")
+    .option("--json", "Print JSON output")
+    .option("--max-chars <number>", "Maximum content characters", parseMaxChars)
+    .option("--with-metadata", "Include indexed note metadata when available")
+    .option(
+      "--with-note-context",
+      "Include indexed note context when available",
+    )
+    .action(
+      async (
+        target: string,
+        options: {
+          config?: string;
+          json?: boolean;
+          maxChars?: number;
+          withMetadata?: boolean;
+          withNoteContext?: boolean;
+        },
+      ) => {
+        const config = await loadConfig({ configPath: options.config });
+        const result = await readVaultTarget(config, {
+          target,
+          maxChars: options.maxChars,
+          withMetadata: options.withMetadata,
+          withNoteContext: options.withNoteContext,
+        });
+
+        if (options.json === true) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+
+        console.log(formatReadResult(result));
+      },
+    );
+
   return program;
 }
 
@@ -149,6 +191,15 @@ function parseSearchLimit(value: string): number {
   }
 
   return limit;
+}
+
+function parseMaxChars(value: string): number {
+  const maxChars = Number(value);
+  if (!Number.isInteger(maxChars) || maxChars < 1) {
+    throw new InvalidArgumentError("Max chars must be a positive integer");
+  }
+
+  return maxChars;
 }
 
 function toKeywordSearchOutput(result: Bm25SearchResult): KeywordSearchOutput {
@@ -198,6 +249,40 @@ function formatIndexFileResult(result: {
     `Path: ${result.path}`,
     `Status: ${result.status}`,
     `Chunks: ${result.chunkCount}`,
+  ].join("\n");
+}
+
+function formatReadResult(result: ReadVaultTargetResult): string {
+  const lines = [result.type === "note" ? result.content : result.text];
+
+  if (result.truncated) {
+    lines.push(`\n[truncated from ${result.originalLength} characters]`);
+  }
+
+  if (result.type === "note" && result.metadata !== undefined) {
+    lines.push("", formatNoteMetadata(result.metadata));
+  }
+
+  if (result.type === "chunk" && result.noteContext !== undefined) {
+    lines.push("", formatNoteMetadata(result.noteContext));
+  }
+
+  return lines.join("\n");
+}
+
+function formatNoteMetadata(metadata: {
+  path: string;
+  title: string;
+  aliases: string[];
+  tags: string[];
+}): string {
+  return [
+    `Path: ${metadata.path}`,
+    `Title: ${metadata.title}`,
+    ...(metadata.aliases.length > 0
+      ? [`Aliases: ${metadata.aliases.join(", ")}`]
+      : []),
+    ...(metadata.tags.length > 0 ? [`Tags: ${metadata.tags.join(", ")}`] : []),
   ].join("\n");
 }
 

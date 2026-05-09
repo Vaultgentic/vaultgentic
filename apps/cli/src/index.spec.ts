@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { openSearchDatabase } from "@vaultgentic/core";
 import { createProgram, packageVersion } from "./index.js";
 
 describe("GIVEN the CLI package", () => {
@@ -29,6 +30,12 @@ describe("GIVEN the CLI package", () => {
         expect(
           createProgram().commands.map((command) => command.name()),
         ).toEqual(expect.arrayContaining(["search"]));
+      });
+
+      test("SHOULD include the read command", () => {
+        expect(
+          createProgram().commands.map((command) => command.name()),
+        ).toEqual(expect.arrayContaining(["read"]));
       });
     });
   });
@@ -314,8 +321,144 @@ describe("GIVEN the search command", () => {
   });
 });
 
+describe("GIVEN the read command", () => {
+  describe("WHEN a vault-relative note path is requested", () => {
+    describe("THEN note content is printed", () => {
+      test("SHOULD print the note as JSON", async () => {
+        const { configPath } = await createSearchFixture("read-note");
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "read",
+              "alpha.md",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(JSON.parse(output)).toMatchObject({
+          type: "note",
+          path: "alpha.md",
+          content: expect.stringContaining("sqlite-vec extension"),
+          truncated: false,
+        });
+      });
+    });
+  });
+
+  describe("WHEN a numeric chunk id is requested", () => {
+    describe("THEN indexed chunk content is printed", () => {
+      test("SHOULD print the chunk as JSON", async () => {
+        const { configPath, databasePath, vaultPath } =
+          await createSearchFixture("read-chunk");
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+        const chunkId = readChunkIdByText(
+          { databasePath, vaultPath },
+          "sqlite-vec extension",
+        );
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "read",
+              String(chunkId),
+              "--config",
+              configPath,
+              "--with-note-context",
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(JSON.parse(output)).toMatchObject({
+          type: "chunk",
+          id: chunkId,
+          path: "alpha.md",
+          text: expect.stringContaining("sqlite-vec extension"),
+          noteContext: {
+            path: "alpha.md",
+            title: "Alpha",
+          },
+        });
+      });
+    });
+  });
+
+  describe("WHEN maximum characters are requested", () => {
+    describe("THEN content is truncated", () => {
+      test("SHOULD print truncation details", async () => {
+        const { configPath } = await createSearchFixture("read-truncated");
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "read",
+              "alpha.md",
+              "--config",
+              configPath,
+              "--max-chars",
+              "5",
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(JSON.parse(output)).toMatchObject({
+          type: "note",
+          content: "---\nt",
+          truncated: true,
+        });
+      });
+    });
+  });
+
+  describe("WHEN an ambiguous target is requested", () => {
+    describe("THEN a clear read error is raised", () => {
+      test("SHOULD reject non-md non-numeric targets", async () => {
+        const { configPath } = await createSearchFixture("read-invalid");
+
+        await expect(
+          createProgram().parseAsync(
+            ["node", "vaultgentic", "read", "alpha", "--config", configPath],
+            { from: "node" },
+          ),
+        ).rejects.toThrow(
+          "Read target must be a numeric chunk id or vault-relative .md note path",
+        );
+      });
+    });
+  });
+});
+
 async function createSearchFixture(name: string): Promise<{
   configPath: string;
+  databasePath: string;
+  vaultPath: string;
 }> {
   const cwd = await mkdtemp(
     path.join(tmpdir(), `vaultgentic-cli-search-${name}-`),
@@ -331,7 +474,25 @@ async function createSearchFixture(name: string): Promise<{
   await writeFile(path.join(vaultPath, "beta.md"), "# Beta\n\nOther content.");
   await writeFile(configPath, JSON.stringify({ vaultPath, databasePath }));
 
-  return { configPath };
+  return { configPath, databasePath, vaultPath };
+}
+
+function readChunkIdByText(
+  config: {
+    vaultPath: string;
+    databasePath: string;
+  },
+  text: string,
+): number {
+  const database = openSearchDatabase(config);
+  try {
+    const row = database
+      .prepare("SELECT id FROM chunks WHERE text LIKE ? ORDER BY id LIMIT 1")
+      .get(`%${text}%`) as { id: number };
+    return row.id;
+  } finally {
+    database.close();
+  }
 }
 
 async function captureConsoleLog(
