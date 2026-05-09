@@ -5,17 +5,24 @@ import {
   initializeSearchDatabase,
   loadConfig,
   readVaultTarget,
+  rebuildSearchIndex,
   searchBm25,
   syncSearchIndex,
   vaultgenticCoreName,
   type Bm25SearchResult,
   type DatabaseStatus,
   type ReadVaultTargetResult,
+  type RebuildSearchIndexResult,
 } from "@vaultgentic/core";
 import { createRequire } from "node:module";
+import { createInterface } from "node:readline/promises";
 
 type KeywordSearchOutput = Bm25SearchResult & {
   matchedBy: ["keyword"];
+};
+
+type CreateProgramOptions = {
+  confirmIndexRebuild?: () => Promise<boolean>;
 };
 
 const require = createRequire(import.meta.url);
@@ -23,7 +30,8 @@ const packageJson = require("../package.json") as { version: string };
 
 export const packageVersion = packageJson.version;
 
-export function createProgram(): Command {
+export function createProgram(options: CreateProgramOptions = {}): Command {
+  const confirmIndexRebuild = options.confirmIndexRebuild ?? promptIndexRebuild;
   const program = new Command()
     .name("vaultgentic")
     .description("Local Obsidian search and MCP tooling")
@@ -80,6 +88,39 @@ export function createProgram(): Command {
         ].join("\n"),
       );
     });
+
+  indexCommand
+    .command("rebuild")
+    .description("Destructively rebuild the local search index")
+    .option("--config <path>", "Path to config file")
+    .option("--json", "Print JSON output")
+    .option("--force", "Skip confirmation prompt")
+    .action(
+      async (options: { config?: string; json?: boolean; force?: boolean }) => {
+        if (options.force !== true) {
+          const confirmed = await confirmIndexRebuild();
+          if (!confirmed) {
+            if (options.json === true) {
+              console.log(JSON.stringify({ cancelled: true }, null, 2));
+              return;
+            }
+
+            console.log("Rebuild cancelled.");
+            return;
+          }
+        }
+
+        const config = await loadConfig({ configPath: options.config });
+        const result = await rebuildSearchIndex(config);
+
+        if (options.json === true) {
+          console.log(JSON.stringify(result, null, 2));
+          return;
+        }
+
+        console.log(formatRebuildResult(result));
+      },
+    );
 
   indexCommand
     .command("status")
@@ -252,6 +293,17 @@ function formatIndexFileResult(result: {
   ].join("\n");
 }
 
+function formatRebuildResult(result: RebuildSearchIndexResult): string {
+  return [
+    `Indexed: ${result.indexed}`,
+    `Skipped: ${result.skipped}`,
+    `Deleted: ${result.deleted}`,
+    `Notes: ${result.status.noteCount}`,
+    `Chunks: ${result.status.chunkCount}`,
+    `Last indexed: ${formatLastIndexedAt(result.status.lastIndexedAt)}`,
+  ].join("\n");
+}
+
 function formatReadResult(result: ReadVaultTargetResult): string {
   const lines = [result.type === "note" ? result.content : result.text];
 
@@ -293,12 +345,43 @@ function formatStatus(status: DatabaseStatus): string {
     `Schema version: ${status.schemaVersion}`,
     `Notes: ${status.noteCount}`,
     `Chunks: ${status.chunkCount}`,
+    `Last indexed: ${formatLastIndexedAt(status.lastIndexedAt)}`,
     `SQLite health: ${status.sqlite.ok ? "ok" : "error"}`,
     `WAL enabled: ${status.sqlite.walEnabled ? "yes" : "no"}`,
     `Foreign keys enabled: ${status.sqlite.foreignKeysEnabled ? "yes" : "no"}`,
     `FTS5 available: ${status.sqlite.fts5Available ? "yes" : "no"}`,
     `sqlite-vec available: ${status.sqlite.sqliteVecAvailable ? "yes" : "no"}`,
   ].join("\n");
+}
+
+function formatLastIndexedAt(lastIndexedAt: number | null): string {
+  if (lastIndexedAt === null) {
+    return "never";
+  }
+
+  return new Date(lastIndexedAt).toISOString();
+}
+
+async function promptIndexRebuild(): Promise<boolean> {
+  if (process.stdin.isTTY !== true) {
+    throw new Error(
+      "Index rebuild confirmation requires an interactive terminal; use --force to rebuild non-interactively",
+    );
+  }
+
+  const readline = createInterface({
+    input: process.stdin,
+    output: process.stderr,
+  });
+
+  try {
+    const answer = await readline.question(
+      'This will delete and rebuild the local search index. Type "rebuild" to continue: ',
+    );
+    return answer.trim() === "rebuild";
+  } finally {
+    readline.close();
+  }
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

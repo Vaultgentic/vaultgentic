@@ -22,6 +22,7 @@ describe("GIVEN SQLite search database initialization", () => {
           schemaVersion,
           noteCount: 0,
           chunkCount: 0,
+          lastIndexedAt: null,
           sqlite: {
             ok: true,
             walEnabled: true,

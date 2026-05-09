@@ -3,10 +3,17 @@ import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { resolveVaultRelativePath } from "./config.js";
-import { chunkMarkdownNote, parseMarkdownNote } from "./markdown.js";
+import {
+  chunkMarkdownNote,
+  parseMarkdownNote,
+  type MarkdownChunk,
+  type ParsedMarkdownNote,
+} from "./markdown.js";
 import { scanVaultFiles, type VaultFileMetadata } from "./scanner.js";
 import {
   initializeSearchDatabase,
+  schemaVersion,
+  type DatabaseStatus,
   type SearchDatabaseConfig,
 } from "./database.js";
 
@@ -22,6 +29,14 @@ export type SyncSearchIndexResult = {
   deleted: number;
   files: IndexFileResult[];
   deletedPaths: string[];
+};
+
+export type RebuildSearchIndexResult = {
+  indexed: number;
+  skipped: 0;
+  deleted: number;
+  files: IndexFileResult[];
+  status: DatabaseStatus;
 };
 
 export type Bm25SearchResult = {
@@ -59,6 +74,12 @@ type FtsChunkRow = {
   title: string;
   headingPath: string | null;
   text: string;
+};
+
+type PreparedIndexedFile = {
+  metadata: VaultFileMetadata & { content_hash: string };
+  note: ParsedMarkdownNote;
+  chunks: MarkdownChunk[];
 };
 
 export function openSearchDatabase(
@@ -164,6 +185,62 @@ export async function syncSearchIndex(
   }
 }
 
+export async function rebuildSearchIndex(
+  config: SearchDatabaseConfig,
+): Promise<RebuildSearchIndexResult> {
+  const files = await scanVaultFiles(config, { includeContentHash: true });
+  const preparedFiles: PreparedIndexedFile[] = [];
+
+  for (const file of files) {
+    if (file.content_hash === undefined) {
+      throw new Error(`Missing content hash for scanned file: ${file.path}`);
+    }
+
+    const content = await readFile(
+      path.join(config.vaultPath, file.path),
+      "utf8",
+    );
+    preparedFiles.push(
+      prepareFileContent({ ...file, content_hash: file.content_hash }, content),
+    );
+  }
+
+  const database = openSearchDatabase(config);
+
+  try {
+    ensureFtsTable(database);
+    const currentPaths = new Set(files.map((file) => file.path));
+    const deleted = readIndexedPaths(database).filter(
+      (indexedPath) => !currentPaths.has(indexedPath),
+    ).length;
+    const now = Date.now();
+    const indexedFiles: IndexFileResult[] = [];
+
+    database.transaction(() => {
+      clearIndexedContent(database);
+
+      for (const preparedFile of preparedFiles) {
+        writePreparedFile(database, preparedFile, now);
+        indexedFiles.push({
+          path: preparedFile.metadata.path,
+          status: "indexed",
+          chunkCount: preparedFile.chunks.length,
+        });
+      }
+    })();
+
+    return {
+      indexed: indexedFiles.length,
+      skipped: 0,
+      deleted,
+      files: indexedFiles,
+      status: readDatabaseStatus(database, config),
+    };
+  } finally {
+    database.close();
+  }
+}
+
 export function searchBm25(
   config: SearchDatabaseConfig,
   options: { query: string; limit?: number },
@@ -233,76 +310,99 @@ function indexFileContent(
   }
 
   ensureFtsTable(database);
-  const note = parseMarkdownNote({ path: metadata.path, content });
-  const chunks = chunkMarkdownNote(note);
+  const preparedFile = prepareFileContent(metadata, content);
   const now = Date.now();
 
   database.transaction(() => {
     deleteIndexedPath(database, metadata.path);
-
-    const noteResult = database
-      .prepare(
-        `
-          INSERT INTO notes (
-            path, title, aliases_json, tags_json, frontmatter_json, links_json,
-            mtime_ms, size_bytes, content_hash, indexed_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `,
-      )
-      .run(
-        note.path,
-        note.title,
-        JSON.stringify(note.aliases),
-        JSON.stringify(note.tags),
-        JSON.stringify(note.frontmatter),
-        JSON.stringify(note.links),
-        metadata.mtime_ms,
-        metadata.size_bytes,
-        metadata.content_hash,
-        now,
-      );
-    const noteId = Number(noteResult.lastInsertRowid);
-    const insertChunk = database.prepare(
-      `
-        INSERT INTO chunks (
-          note_id, chunk_index, path, title, heading_path, start_line, end_line,
-          text, token_estimate, content_hash, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `,
-    );
-    const insertFts = database.prepare(
-      `
-        INSERT INTO chunks_fts (rowid, path, title, heading_path, text)
-        VALUES (?, ?, ?, ?, ?)
-      `,
-    );
-
-    for (const chunk of chunks) {
-      const headingPath = chunk.headingPath.join(" / ");
-      const chunkResult = insertChunk.run(
-        noteId,
-        chunk.index,
-        chunk.path,
-        chunk.title,
-        headingPath,
-        chunk.start_line ?? null,
-        chunk.end_line ?? null,
-        chunk.text,
-        estimateTokens(chunk.text),
-        chunk.content_hash,
-        now,
-      );
-      insertFts.run(
-        Number(chunkResult.lastInsertRowid),
-        chunk.path,
-        chunk.title,
-        headingPath,
-        chunk.text,
-      );
-    }
+    writePreparedFile(database, preparedFile, now);
   })();
 
-  return { path: metadata.path, status: "indexed", chunkCount: chunks.length };
+  return {
+    path: metadata.path,
+    status: "indexed",
+    chunkCount: preparedFile.chunks.length,
+  };
+}
+
+function prepareFileContent(
+  metadata: VaultFileMetadata & { content_hash: string },
+  content: string,
+): PreparedIndexedFile {
+  const note = parseMarkdownNote({ path: metadata.path, content });
+  return {
+    metadata,
+    note,
+    chunks: chunkMarkdownNote(note),
+  };
+}
+
+function writePreparedFile(
+  database: Database.Database,
+  preparedFile: PreparedIndexedFile,
+  now: number,
+): void {
+  const { metadata, note, chunks } = preparedFile;
+  const noteResult = database
+    .prepare(
+      `
+        INSERT INTO notes (
+          path, title, aliases_json, tags_json, frontmatter_json, links_json,
+          mtime_ms, size_bytes, content_hash, indexed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+    )
+    .run(
+      note.path,
+      note.title,
+      JSON.stringify(note.aliases),
+      JSON.stringify(note.tags),
+      JSON.stringify(note.frontmatter),
+      JSON.stringify(note.links),
+      metadata.mtime_ms,
+      metadata.size_bytes,
+      metadata.content_hash,
+      now,
+    );
+  const noteId = Number(noteResult.lastInsertRowid);
+  const insertChunk = database.prepare(
+    `
+      INSERT INTO chunks (
+        note_id, chunk_index, path, title, heading_path, start_line, end_line,
+        text, token_estimate, content_hash, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+  );
+  const insertFts = database.prepare(
+    `
+      INSERT INTO chunks_fts (rowid, path, title, heading_path, text)
+      VALUES (?, ?, ?, ?, ?)
+    `,
+  );
+
+  for (const chunk of chunks) {
+    const headingPath = chunk.headingPath.join(" / ");
+    const chunkResult = insertChunk.run(
+      noteId,
+      chunk.index,
+      chunk.path,
+      chunk.title,
+      headingPath,
+      chunk.start_line ?? null,
+      chunk.end_line ?? null,
+      chunk.text,
+      estimateTokens(chunk.text),
+      chunk.content_hash,
+      now,
+    );
+    insertFts.run(
+      Number(chunkResult.lastInsertRowid),
+      chunk.path,
+      chunk.title,
+      headingPath,
+      chunk.text,
+    );
+  }
 }
 
 function indexCurrentFile(
@@ -365,6 +465,33 @@ function deleteIndexedPath(
   database.prepare("DELETE FROM notes WHERE path = ?").run(indexedPath);
 }
 
+function clearIndexedContent(database: Database.Database): void {
+  database.prepare("DELETE FROM chunks_fts").run();
+  database.prepare("DELETE FROM chunks").run();
+  database.prepare("DELETE FROM notes").run();
+}
+
+function readDatabaseStatus(
+  database: Database.Database,
+  config: SearchDatabaseConfig,
+): DatabaseStatus {
+  return {
+    vaultPath: config.vaultPath,
+    databasePath: config.databasePath,
+    schemaVersion,
+    noteCount: readCount(database, "notes"),
+    chunkCount: readCount(database, "chunks"),
+    lastIndexedAt: readLastIndexedAt(database),
+    sqlite: {
+      ok: true,
+      walEnabled: readJournalMode(database) === "wal",
+      foreignKeysEnabled: readForeignKeys(database),
+      fts5Available: true,
+      sqliteVecAvailable: isSqliteVecAvailable(database),
+    },
+  };
+}
+
 function readIndexedPaths(database: Database.Database): string[] {
   return database
     .prepare("SELECT path FROM notes ORDER BY path")
@@ -380,6 +507,41 @@ function readChunkCount(
     .prepare("SELECT COUNT(*) AS count FROM chunks WHERE path = ?")
     .get(indexedPath) as { count: number };
   return row.count;
+}
+
+function readCount(
+  database: Database.Database,
+  tableName: "notes" | "chunks",
+): number {
+  const row = database
+    .prepare(`SELECT COUNT(*) AS count FROM ${tableName}`)
+    .get() as { count: number };
+  return row.count;
+}
+
+function readLastIndexedAt(database: Database.Database): number | null {
+  const row = database
+    .prepare("SELECT MAX(indexed_at) AS lastIndexedAt FROM notes")
+    .get() as { lastIndexedAt: number | null };
+  return row.lastIndexedAt;
+}
+
+function readJournalMode(database: Database.Database): string {
+  const row = database.pragma("journal_mode", { simple: true }) as string;
+  return row.toLowerCase();
+}
+
+function readForeignKeys(database: Database.Database): boolean {
+  return database.pragma("foreign_keys", { simple: true }) === 1;
+}
+
+function isSqliteVecAvailable(database: Database.Database): boolean {
+  try {
+    database.prepare("SELECT vec_version() AS version").get();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function readFtsCount(

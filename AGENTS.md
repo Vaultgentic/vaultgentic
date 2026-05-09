@@ -3,7 +3,7 @@
 # Tasks
 - When picking up a task, mark it as in progress.
 - Add comments to the task whenever changes are made by request, with justification and explanation.
-- Do not automatically commit, push or close a task until confirmation is given. Then do all at once.
+- When approval is given commit, push, and close the task.
 
 # Deep modules
 

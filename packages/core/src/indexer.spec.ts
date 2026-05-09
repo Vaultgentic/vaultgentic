@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeSearchDatabase } from "./database.js";
-import { indexVaultFile, searchBm25, syncSearchIndex } from "./indexer.js";
+import {
+  indexVaultFile,
+  rebuildSearchIndex,
+  searchBm25,
+  syncSearchIndex,
+} from "./indexer.js";
 
 describe("GIVEN a BM25 search index", () => {
   describe("WHEN a single markdown file is indexed", () => {
@@ -120,6 +125,70 @@ describe("GIVEN a BM25 search index", () => {
           chunks: 0,
           fts: 0,
         });
+      });
+    });
+  });
+
+  describe("WHEN the index is rebuilt from scratch", () => {
+    describe("THEN stale local data is replaced", () => {
+      it("SHOULD clear deleted notes and index current vault files", async () => {
+        const config = await createFixture("rebuild-stale-file");
+        const stalePath = path.join(config.vaultPath, "stale.md");
+        await writeFile(stalePath, "# Stale\n\noldterm");
+        await indexVaultFile(config, "stale.md");
+        await rm(stalePath);
+        await writeFile(
+          path.join(config.vaultPath, "current.md"),
+          "# Current\n\nnewterm",
+        );
+
+        const result = await rebuildSearchIndex(config);
+
+        expect(result).toMatchObject({
+          indexed: 1,
+          skipped: 0,
+          deleted: 1,
+          status: {
+            noteCount: 1,
+            chunkCount: 1,
+            lastIndexedAt: expect.any(Number),
+          },
+        });
+        expect(result.files).toEqual([
+          { path: "current.md", status: "indexed", chunkCount: 1 },
+        ]);
+        expect(searchBm25(config, { query: "oldterm" })).toEqual([]);
+        expect(searchBm25(config, { query: "newterm" })).toHaveLength(1);
+        expect(readCounts(config.databasePath)).toEqual({
+          notes: 1,
+          chunks: 1,
+          fts: 1,
+        });
+      });
+    });
+  });
+
+  describe("WHEN the index is rebuilt with multiple markdown files", () => {
+    describe("THEN every current note is parsed, chunked, and indexed", () => {
+      it("SHOULD rebuild searchable chunks for all scanned notes", async () => {
+        const config = await createFixture("rebuild-multiple-files");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Alpha\n\nkeyword-one",
+        );
+        await writeFile(
+          path.join(config.vaultPath, "beta.md"),
+          "# Beta\n\nkeyword-two",
+        );
+
+        const result = await rebuildSearchIndex(config);
+
+        expect(result.indexed).toBe(2);
+        expect(result.deleted).toBe(0);
+        expect(result.status.noteCount).toBe(2);
+        expect(result.status.chunkCount).toBe(2);
+        expect(searchBm25(config, { query: "keyword-one" })).toHaveLength(1);
+        expect(searchBm25(config, { query: "keyword-two" })).toHaveLength(1);
       });
     });
   });

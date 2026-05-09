@@ -16,6 +16,7 @@ export type DatabaseStatus = {
   schemaVersion: number;
   noteCount: number;
   chunkCount: number;
+  lastIndexedAt: number | null;
   sqlite: {
     ok: boolean;
     walEnabled: boolean;
@@ -128,6 +129,7 @@ export function initializeSearchDatabase(
       schemaVersion: storedSchemaVersion,
       noteCount: readCount(database, "notes"),
       chunkCount: readCount(database, "chunks"),
+      lastIndexedAt: readLastIndexedAt(database),
       sqlite: {
         ok: true,
         walEnabled: readJournalMode(database) === "wal",
@@ -194,6 +196,14 @@ function readCount(database: Database.Database, tableName: "notes" | "chunks") {
   };
 
   return row.count;
+}
+
+function readLastIndexedAt(database: Database.Database): number | null {
+  const row = database
+    .prepare("SELECT MAX(indexed_at) AS lastIndexedAt FROM notes")
+    .get() as { lastIndexedAt: number | null };
+
+  return row.lastIndexedAt;
 }
 
 function readJournalMode(database: Database.Database): string {

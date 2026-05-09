@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openSearchDatabase } from "@vaultgentic/core";
@@ -22,7 +22,7 @@ describe("GIVEN the CLI package", () => {
         );
 
         expect(indexCommand?.commands.map((command) => command.name())).toEqual(
-          expect.arrayContaining(["file", "sync", "status"]),
+          expect.arrayContaining(["file", "sync", "rebuild", "status"]),
         );
       });
 
@@ -192,6 +192,96 @@ describe("GIVEN the index status command", () => {
             foreignKeysEnabled: true,
           },
         });
+      });
+    });
+  });
+});
+
+describe("GIVEN the index rebuild command", () => {
+  describe("WHEN confirmation is rejected", () => {
+    describe("THEN the destructive rebuild is cancelled", () => {
+      it("SHOULD NOT rebuild the configured index", async () => {
+        const { configPath } = await createSearchFixture("rebuild-cancelled");
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram({
+            confirmIndexRebuild: async () => false,
+          }).parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "rebuild",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(JSON.parse(output)).toEqual({ cancelled: true });
+      });
+    });
+  });
+
+  describe("WHEN force is requested", () => {
+    describe("THEN the prompt is skipped and the index is rebuilt", () => {
+      it("SHOULD replace stale data and print updated status", async () => {
+        const { configPath, databasePath, vaultPath } =
+          await createSearchFixture("rebuild-forced");
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+        await rm(path.join(vaultPath, "beta.md"));
+        let promptCalled = false;
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram({
+            confirmIndexRebuild: async () => {
+              promptCalled = true;
+              return false;
+            },
+          }).parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "rebuild",
+              "--config",
+              configPath,
+              "--force",
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(promptCalled).toBe(false);
+        expect(JSON.parse(output)).toMatchObject({
+          indexed: 1,
+          skipped: 0,
+          deleted: 1,
+          status: {
+            noteCount: 1,
+            chunkCount: 2,
+            lastIndexedAt: expect.any(Number),
+          },
+        });
+        expect(readIndexedPaths({ databasePath, vaultPath })).toEqual([
+          "alpha.md",
+        ]);
       });
     });
   });
@@ -490,6 +580,21 @@ function readChunkIdByText(
       .prepare("SELECT id FROM chunks WHERE text LIKE ? ORDER BY id LIMIT 1")
       .get(`%${text}%`) as { id: number };
     return row.id;
+  } finally {
+    database.close();
+  }
+}
+
+function readIndexedPaths(config: {
+  vaultPath: string;
+  databasePath: string;
+}): string[] {
+  const database = openSearchDatabase(config);
+  try {
+    return database
+      .prepare("SELECT path FROM notes ORDER BY path")
+      .all()
+      .map((row) => (row as { path: string }).path);
   } finally {
     database.close();
   }

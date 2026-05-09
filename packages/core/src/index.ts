@@ -35,10 +35,12 @@ export {
 export {
   indexVaultFile,
   openSearchDatabase,
+  rebuildSearchIndex,
   searchBm25,
   syncSearchIndex,
   type Bm25SearchResult,
   type IndexFileResult,
+  type RebuildSearchIndexResult,
   type SyncSearchIndexResult,
 } from "./indexer.js";
 
