@@ -1,5 +1,6 @@
 import { CommanderError, InvalidArgumentError } from "commander";
 import type { IndexProgressEvent, IndexProgressPhase } from "@vaultgentic/core";
+import Table from "cli-table3";
 import ora, { type Ora } from "ora";
 import { createColors } from "picocolors";
 
@@ -33,6 +34,17 @@ export type CliProgress = {
 export type CliProgressOptions = {
   enabled: boolean;
   stream: Pick<NodeJS.WriteStream, "isTTY" | "write">;
+};
+
+export type CliTableColumn = {
+  header: string;
+  width?: number;
+};
+
+export type CliTableOptions = {
+  color: boolean;
+  columns: CliTableColumn[];
+  rows: string[][];
 };
 
 const progressBarWidth = 10;
@@ -141,6 +153,42 @@ export function formatIndexProgressEvent(event: IndexProgressEvent): string {
   ]
     .filter((part) => part !== undefined && part !== "")
     .join(" ");
+}
+
+export function formatCliTable(options: CliTableOptions): string {
+  const colors = createColors(options.color);
+  const table = new Table({
+    head: options.columns.map((column) =>
+      colors.bold(colors.cyan(column.header)),
+    ),
+    colWidths: options.columns.map((column) => column.width ?? null),
+    wordWrap: true,
+    chars: {
+      top: colors.dim("─"),
+      "top-mid": colors.dim("┬"),
+      "top-left": colors.dim("┌"),
+      "top-right": colors.dim("┐"),
+      bottom: colors.dim("─"),
+      "bottom-mid": colors.dim("┴"),
+      "bottom-left": colors.dim("└"),
+      "bottom-right": colors.dim("┘"),
+      left: colors.dim("│"),
+      "left-mid": colors.dim("├"),
+      mid: colors.dim("─"),
+      "mid-mid": colors.dim("┼"),
+      right: colors.dim("│"),
+      "right-mid": colors.dim("┤"),
+      middle: colors.dim("│"),
+    },
+    style: {
+      head: [],
+      border: [],
+    },
+  });
+
+  table.push(...options.rows);
+
+  return table.toString();
 }
 
 export function isCommanderExit(error: unknown): error is CommanderError {

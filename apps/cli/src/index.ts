@@ -25,20 +25,24 @@ import { createInterface } from "node:readline/promises";
 import { fileURLToPath } from "node:url";
 import {
   createCliProgress,
+  formatCliTable,
   formatCliError,
   isCommanderExit,
   shouldUseColor,
 } from "./presentation.js";
 
 type KeywordSearchOutput = Bm25SearchResult & {
+  chunkId: number;
   matchedBy: ["keyword"];
 };
 
 type SemanticSearchOutput = SemanticSearchResult & {
+  chunkId: number;
   matchedBy: ["vector"];
 };
 
 type TitleSearchOutput = TitleSearchResult & {
+  chunkId: null;
   matchedBy: ["title"];
 };
 
@@ -49,11 +53,11 @@ type HybridComponentScore = {
   score: number;
 };
 
-type HybridSearchOutput = (
-  | Bm25SearchResult
-  | SemanticSearchResult
-  | TitleSearchResult
-) & {
+type HybridSearchOutput = Omit<
+  Bm25SearchResult | SemanticSearchResult | TitleSearchResult,
+  "chunkId"
+> & {
+  chunkId: number | null;
   matchedBy: HybridComponentName[];
   score: number;
   componentScores: Partial<Record<HybridComponentName, HybridComponentScore>>;
@@ -69,6 +73,7 @@ type SearchMode = "hybrid" | "keyword" | "semantic" | "title";
 
 type CreateProgramOptions = {
   confirmIndexRebuild?: () => Promise<boolean>;
+  outputStream?: Pick<NodeJS.WriteStream, "isTTY">;
   progressStream?: Pick<NodeJS.WriteStream, "isTTY" | "write">;
 };
 
@@ -98,7 +103,10 @@ export function isMainModule(moduleUrl: string, argvPath: string | undefined) {
 
 export function createProgram(options: CreateProgramOptions = {}): Command {
   const confirmIndexRebuild = options.confirmIndexRebuild ?? promptIndexRebuild;
+  const tableOutput = options.outputStream?.isTTY ?? process.stdout.isTTY;
+  const tableColor = shouldUseColor(options.outputStream ?? process.stdout);
   const progressStream = options.progressStream ?? process.stderr;
+  const tableOptions = { color: tableColor, table: tableOutput === true };
   const program = new Command()
     .name("vaultgentic")
     .description("Local Obsidian search and MCP tooling")
@@ -138,7 +146,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           return;
         }
 
-        console.log(formatIndexFileResult(result));
+        console.log(formatIndexFileResult(result, tableOptions));
       },
     );
 
@@ -164,13 +172,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         return;
       }
 
-      console.log(
-        [
-          `Indexed: ${result.indexed}`,
-          `Skipped: ${result.skipped}`,
-          `Deleted: ${result.deleted}`,
-        ].join("\n"),
-      );
+      console.log(formatSyncResult(result, tableOptions));
     });
 
   indexCommand
@@ -210,7 +212,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           return;
         }
 
-        console.log(formatRebuildResult(result));
+        console.log(formatRebuildResult(result, tableOptions));
       },
     );
 
@@ -228,7 +230,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         return;
       }
 
-      console.log(formatStatus(status));
+      console.log(formatStatus(status, tableOptions));
     });
 
   program
@@ -264,7 +266,10 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         }
 
         console.log(
-          formatSearchResults(output, { showScores: options.scores }),
+          formatSearchResults(output, {
+            showScores: options.scores,
+            ...tableOptions,
+          }),
         );
       },
     );
@@ -305,7 +310,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           return;
         }
 
-        console.log(formatReadResult(result));
+        console.log(formatReadResult(result, tableOptions));
       },
     );
 
@@ -455,7 +460,7 @@ function toSemanticSearchOutput(
 }
 
 function toTitleSearchOutput(result: TitleSearchResult): TitleSearchOutput {
-  return { ...result, matchedBy: ["title"] };
+  return { ...result, chunkId: null, matchedBy: ["title"] };
 }
 
 async function search(
@@ -534,6 +539,7 @@ function addHybridCandidate(
 
   const candidate: HybridSearchOutput = {
     ...result,
+    chunkId: "chunkId" in result ? result.chunkId : null,
     matchedBy: [],
     score: 0,
     componentScores: {},
@@ -570,15 +576,30 @@ function addHybridComponent(
 
 function formatSearchResults(
   results: SearchOutput[],
-  options: { showScores?: boolean },
+  options: { color: boolean; showScores?: boolean; table: boolean },
 ): string {
   if (results.length === 0) {
     return "No results.";
   }
 
-  return results
-    .map((result) => formatSearchResult(result, options))
-    .join("\n\n");
+  if (!options.table) {
+    return results
+      .map((result) => formatSearchResult(result, options))
+      .join("\n\n");
+  }
+
+  return formatCliTable({
+    color: options.color,
+    columns: [
+      { header: "Rank", width: 6 },
+      { header: "Chunk", width: 9 },
+      { header: "Title", width: 20 },
+      { header: "Path", width: 20 },
+      { header: "Matched", width: 14 },
+      ...(options.showScores === true ? [{ header: "Score", width: 12 }] : []),
+    ],
+    rows: results.map((result) => formatSearchResultRow(result, options)),
+  });
 }
 
 function formatSearchResult(
@@ -587,7 +608,43 @@ function formatSearchResult(
 ): string {
   const lines = [
     `${result.rank}. ${result.title}`,
+    `Chunk ID: ${formatChunkId(result)}`,
     `Path: ${result.path}`,
+    ...formatSearchResultDetails(result, options),
+  ];
+
+  return lines.join("\n");
+}
+
+function formatSearchResultRow(
+  result: SearchOutput,
+  options: { showScores?: boolean },
+): string[] {
+  return [
+    String(result.rank),
+    formatChunkId(result),
+    result.title,
+    result.path,
+    result.matchedBy.join(", "),
+    ...(options.showScores === true ? [formatSearchScore(result)] : []),
+  ];
+}
+
+function formatChunkId(result: SearchOutput): string {
+  return result.chunkId === null ? "note" : String(result.chunkId);
+}
+
+function formatSearchScore(result: SearchOutput): string {
+  return Number.isFinite(result.score)
+    ? result.score.toPrecision(4)
+    : String(result.score);
+}
+
+function formatSearchResultDetails(
+  result: SearchOutput,
+  options: { showScores?: boolean },
+): string[] {
+  const details = [
     ...("headingPath" in result && result.headingPath.length > 0
       ? [`Heading: ${result.headingPath.join(" > ")}`]
       : []),
@@ -599,15 +656,15 @@ function formatSearchResult(
   ];
 
   if (options.showScores === true) {
-    lines.push(`Score: ${result.score}`);
+    details.push(`Score: ${result.score}`);
     if ("componentScores" in result) {
-      lines.push(
+      details.push(
         `Component scores: ${formatComponentScores(result.componentScores)}`,
       );
     }
   }
 
-  return lines.join("\n");
+  return details;
 }
 
 function formatComponentScores(
@@ -626,30 +683,98 @@ function formatComponentScores(
     .join(", ");
 }
 
-function formatIndexFileResult(result: {
-  path: string;
-  status: string;
-  chunkCount: number;
-}): string {
-  return [
-    `Path: ${result.path}`,
-    `Status: ${result.status}`,
-    `Chunks: ${result.chunkCount}`,
-  ].join("\n");
+function formatIndexFileResult(
+  result: {
+    path: string;
+    status: string;
+    chunkCount: number;
+  },
+  options: { color: boolean; table: boolean },
+): string {
+  if (!options.table) {
+    return [
+      `Path: ${result.path}`,
+      `Status: ${result.status}`,
+      `Chunks: ${result.chunkCount}`,
+    ].join("\n");
+  }
+
+  return formatCliTable({
+    color: options.color,
+    columns: [
+      { header: "Path", width: 44 },
+      { header: "Status", width: 12 },
+      { header: "Chunks", width: 10 },
+    ],
+    rows: [[result.path, result.status, String(result.chunkCount)]],
+  });
 }
 
-function formatRebuildResult(result: RebuildSearchIndexResult): string {
-  return [
-    `Indexed: ${result.indexed}`,
-    `Skipped: ${result.skipped}`,
-    `Deleted: ${result.deleted}`,
-    `Notes: ${result.status.noteCount}`,
-    `Chunks: ${result.status.chunkCount}`,
-    `Last indexed: ${formatLastIndexedAt(result.status.lastIndexedAt)}`,
-  ].join("\n");
+function formatSyncResult(
+  result: {
+    indexed: number;
+    skipped: number;
+    deleted: number;
+  },
+  options: { color: boolean; table: boolean },
+): string {
+  if (!options.table) {
+    return [
+      `Indexed: ${result.indexed}`,
+      `Skipped: ${result.skipped}`,
+      `Deleted: ${result.deleted}`,
+    ].join("\n");
+  }
+
+  return formatCliTable({
+    color: options.color,
+    columns: [
+      { header: "Indexed", width: 10 },
+      { header: "Skipped", width: 10 },
+      { header: "Deleted", width: 10 },
+    ],
+    rows: [
+      [String(result.indexed), String(result.skipped), String(result.deleted)],
+    ],
+  });
 }
 
-function formatReadResult(result: ReadVaultTargetResult): string {
+function formatRebuildResult(
+  result: RebuildSearchIndexResult,
+  options: { color: boolean; table: boolean },
+): string {
+  if (!options.table) {
+    return [
+      `Indexed: ${result.indexed}`,
+      `Skipped: ${result.skipped}`,
+      `Deleted: ${result.deleted}`,
+      `Notes: ${result.status.noteCount}`,
+      `Chunks: ${result.status.chunkCount}`,
+      `Last indexed: ${formatLastIndexedAt(result.status.lastIndexedAt)}`,
+    ].join("\n");
+  }
+
+  return formatCliTable({
+    color: options.color,
+    columns: [
+      { header: "Metric", width: 18 },
+      { header: "Value", width: 52 },
+    ],
+    rows: [
+      ["Indexed", String(result.indexed)],
+      ["Skipped", String(result.skipped)],
+      ["Deleted", String(result.deleted)],
+      ["Notes", String(result.status.noteCount)],
+      ["Chunks", String(result.status.chunkCount)],
+      ["Last indexed", formatLastIndexedAt(result.status.lastIndexedAt)],
+    ],
+  });
+}
+
+function formatReadResult(
+  result: ReadVaultTargetResult,
+  options: { color: boolean; table: boolean },
+): string {
   const lines = [result.type === "note" ? result.content : result.text];
 
   if (result.truncated) {
@@ -657,50 +782,103 @@ function formatReadResult(result: ReadVaultTargetResult): string {
   }
 
   if (result.type === "note" && result.metadata !== undefined) {
-    lines.push("", formatNoteMetadata(result.metadata));
+    lines.push("", formatNoteMetadata(result.metadata, options));
   }
 
   if (result.type === "chunk" && result.noteContext !== undefined) {
-    lines.push("", formatNoteMetadata(result.noteContext));
+    lines.push("", formatNoteMetadata(result.noteContext, options));
   }
 
   return lines.join("\n");
 }
 
-function formatNoteMetadata(metadata: {
-  path: string;
-  title: string;
-  aliases: string[];
-  tags: string[];
-}): string {
-  return [
-    `Path: ${metadata.path}`,
-    `Title: ${metadata.title}`,
-    ...(metadata.aliases.length > 0
-      ? [`Aliases: ${metadata.aliases.join(", ")}`]
-      : []),
-    ...(metadata.tags.length > 0 ? [`Tags: ${metadata.tags.join(", ")}`] : []),
-  ].join("\n");
+function formatNoteMetadata(
+  metadata: {
+    path: string;
+    title: string;
+    aliases: string[];
+    tags: string[];
+  },
+  options: { color: boolean; table: boolean },
+): string {
+  if (!options.table) {
+    return [
+      `Path: ${metadata.path}`,
+      `Title: ${metadata.title}`,
+      ...(metadata.aliases.length > 0
+        ? [`Aliases: ${metadata.aliases.join(", ")}`]
+        : []),
+      ...(metadata.tags.length > 0
+        ? [`Tags: ${metadata.tags.join(", ")}`]
+        : []),
+    ].join("\n");
+  }
+
+  return formatCliTable({
+    color: options.color,
+    columns: [
+      { header: "Field", width: 18 },
+      { header: "Value", width: 54 },
+    ],
+    rows: [
+      ["Path", metadata.path],
+      ["Title", metadata.title],
+      ...(metadata.aliases.length > 0
+        ? [["Aliases", metadata.aliases.join(", ")]]
+        : []),
+      ...(metadata.tags.length > 0 ? [["Tags", metadata.tags.join(", ")]] : []),
+    ],
+  });
 }
 
-function formatStatus(status: DatabaseStatus): string {
-  return [
-    `Vault path: ${status.vaultPath}`,
-    `Database path: ${status.databasePath}`,
-    `Schema version: ${status.schemaVersion}`,
-    `Notes: ${status.noteCount}`,
-    `Chunks: ${status.chunkCount}`,
-    `Last indexed: ${formatLastIndexedAt(status.lastIndexedAt)}`,
-    `SQLite health: ${status.sqlite.ok ? "ok" : "error"}`,
-    `WAL enabled: ${status.sqlite.walEnabled ? "yes" : "no"}`,
-    `Foreign keys enabled: ${status.sqlite.foreignKeysEnabled ? "yes" : "no"}`,
-    `FTS5 available: ${status.sqlite.fts5Available ? "yes" : "no"}`,
-    `sqlite-vec available: ${status.sqlite.sqliteVecAvailable ? "yes" : "no"}`,
-    `Vector storage ready: ${status.vectors.ready ? "yes" : "no"}`,
-    `Vector rows: ${status.vectors.chunkEmbeddingCount}`,
-    `Embedding model: ${status.vectors.modelId}`,
-    `Embedding dimension: ${status.vectors.dimension}`,
-  ].join("\n");
+function formatStatus(
+  status: DatabaseStatus,
+  options: { color: boolean; table: boolean },
+): string {
+  if (!options.table) {
+    return [
+      `Vault path: ${status.vaultPath}`,
+      `Database path: ${status.databasePath}`,
+      `Schema version: ${status.schemaVersion}`,
+      `Notes: ${status.noteCount}`,
+      `Chunks: ${status.chunkCount}`,
+      `Last indexed: ${formatLastIndexedAt(status.lastIndexedAt)}`,
+      `SQLite health: ${status.sqlite.ok ? "ok" : "error"}`,
+      `WAL enabled: ${status.sqlite.walEnabled ? "yes" : "no"}`,
+      `Foreign keys enabled: ${status.sqlite.foreignKeysEnabled ? "yes" : "no"}`,
+      `FTS5 available: ${status.sqlite.fts5Available ? "yes" : "no"}`,
+      `sqlite-vec available: ${status.sqlite.sqliteVecAvailable ? "yes" : "no"}`,
+      `Vector storage ready: ${status.vectors.ready ? "yes" : "no"}`,
+      `Vector rows: ${status.vectors.chunkEmbeddingCount}`,
+      `Embedding model: ${status.vectors.modelId}`,
+      `Embedding dimension: ${status.vectors.dimension}`,
+    ].join("\n");
+  }
+
+  return formatCliTable({
+    color: options.color,
+    columns: [
+      { header: "Field", width: 24 },
+      { header: "Value", width: 48 },
+    ],
+    rows: [
+      ["Vault path", status.vaultPath],
+      ["Database path", status.databasePath],
+      ["Schema version", String(status.schemaVersion)],
+      ["Notes", String(status.noteCount)],
+      ["Chunks", String(status.chunkCount)],
+      ["Last indexed", formatLastIndexedAt(status.lastIndexedAt)],
+      ["SQLite health", status.sqlite.ok ? "ok" : "error"],
+      ["WAL enabled", status.sqlite.walEnabled ? "yes" : "no"],
+      ["Foreign keys enabled", status.sqlite.foreignKeysEnabled ? "yes" : "no"],
+      ["FTS5 available", status.sqlite.fts5Available ? "yes" : "no"],
+      ["sqlite-vec available", status.sqlite.sqliteVecAvailable ? "yes" : "no"],
+      ["Vector storage ready", status.vectors.ready ? "yes" : "no"],
+      ["Vector rows", String(status.vectors.chunkEmbeddingCount)],
+      ["Embedding model", status.vectors.modelId],
+      ["Embedding dimension", String(status.vectors.dimension)],
+    ],
+  });
 }
 
 function formatLastIndexedAt(lastIndexedAt: number | null): string {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createCliProgress,
   formatCliError,
+  formatCliTable,
   formatIndexProgressEvent,
   shouldUseColor,
 } from "./presentation.js";
@@ -167,6 +168,40 @@ describe("GIVEN CLI progress presentation", () => {
         progress.succeed("Index sync complete");
 
         expect(output).toBe("");
+      });
+    });
+  });
+});
+
+describe("GIVEN CLI table presentation", () => {
+  describe("WHEN formatting rows with headers", () => {
+    describe("THEN a readable table is returned", () => {
+      it("SHOULD render borders, headers, and cell values", () => {
+        const output = formatCliTable({
+          color: false,
+          columns: [{ header: "Name" }, { header: "Value" }],
+          rows: [["Indexed", "2"]],
+        });
+
+        expect(output).toContain("┌");
+        expect(output).toContain("Name");
+        expect(output).toContain("Value");
+        expect(output).toContain("Indexed");
+        expect(output).toContain("2");
+      });
+    });
+  });
+
+  describe("WHEN color is enabled", () => {
+    describe("THEN table structure is colorized", () => {
+      it("SHOULD include ANSI color sequences", () => {
+        const output = formatCliTable({
+          color: true,
+          columns: [{ header: "Name" }, { header: "Value" }],
+          rows: [["Indexed", "2"]],
+        });
+
+        expect(output).toContain("\u001B[");
       });
     });
   });

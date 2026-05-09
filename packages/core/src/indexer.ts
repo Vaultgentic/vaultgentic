@@ -69,6 +69,7 @@ export type IndexProgressOptions = {
 };
 
 export type Bm25SearchResult = {
+  chunkId: number;
   path: string;
   title: string;
   headingPath: string[];
@@ -81,6 +82,7 @@ export type Bm25SearchResult = {
 };
 
 export type SemanticSearchResult = {
+  chunkId: number;
   path: string;
   title: string;
   headingPath: string[];
@@ -114,6 +116,7 @@ type ExistingNoteRow = {
 };
 
 type SearchRow = {
+  chunkId: number;
   path: string;
   title: string;
   headingPath: string | null;
@@ -125,6 +128,7 @@ type SearchRow = {
 };
 
 type SemanticSearchRow = {
+  chunkId: number;
   path: string;
   title: string;
   headingPath: string | null;
@@ -456,6 +460,7 @@ export function searchBm25(
       .prepare(
         `
           SELECT
+            c.id AS chunkId,
             c.path,
             c.title,
             c.heading_path AS headingPath,
@@ -475,6 +480,7 @@ export function searchBm25(
 
     return rows.map((row, index) => ({
       path: row.path,
+      chunkId: row.chunkId,
       title: row.title,
       headingPath: parseHeadingPath(row.headingPath),
       snippet: row.snippet,
@@ -510,6 +516,7 @@ export async function searchSemantic(
       .prepare(
         `
           SELECT
+            c.id AS chunkId,
             c.path,
             c.title,
             c.heading_path AS headingPath,
@@ -531,6 +538,7 @@ export async function searchSemantic(
 
     return rows.map((row, index) => ({
       path: row.path,
+      chunkId: row.chunkId,
       title: row.title,
       headingPath: parseHeadingPath(row.headingPath),
       snippet: formatSemanticSnippet(row.snippet),

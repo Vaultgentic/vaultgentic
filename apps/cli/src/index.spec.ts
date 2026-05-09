@@ -173,13 +173,18 @@ describe("GIVEN the index sync command", () => {
 
         const stderrOutput = await captureStderr(async (stderr) => {
           const stdoutOutput = await captureConsoleLog(async () => {
-            await createProgram({ progressStream: stderr }).parseAsync(
+            await createProgram({
+              outputStream: { isTTY: true },
+              progressStream: stderr,
+            }).parseAsync(
               ["node", "vaultgentic", "index", "sync", "--config", configPath],
               { from: "node" },
             );
           });
 
-          expect(stdoutOutput).toContain("Indexed: 2");
+          expect(stdoutOutput).toContain("Indexed");
+          expect(stdoutOutput).toContain("2");
+          expect(stdoutOutput).toContain("┌");
         });
 
         expect(stderrOutput).toContain("Scanning");
@@ -242,7 +247,7 @@ describe("GIVEN the index status command", () => {
         };
 
         try {
-          await createProgram().parseAsync(
+          await createProgram({ outputStream: { isTTY: true } }).parseAsync(
             [
               "node",
               "vaultgentic",
@@ -309,7 +314,7 @@ describe("GIVEN the index rebuild command", () => {
         const { configPath, databasePath, vaultPath } =
           await createSearchFixture("rebuild-forced");
         await captureConsoleLog(async () => {
-          await createProgram().parseAsync(
+          await createProgram({ outputStream: { isTTY: true } }).parseAsync(
             [
               "node",
               "vaultgentic",
@@ -386,7 +391,7 @@ describe("GIVEN the search command", () => {
         });
 
         const output = await captureConsoleLog(async () => {
-          await createProgram().parseAsync(
+          await createProgram({ outputStream: { isTTY: true } }).parseAsync(
             [
               "node",
               "vaultgentic",
@@ -402,12 +407,18 @@ describe("GIVEN the search command", () => {
           );
         });
 
-        expect(output).toContain("1. Alpha");
-        expect(output).toContain("Path: alpha.md");
-        expect(output).toContain("Heading: Alpha > Details");
-        expect(output).toContain("sqlite-vec");
-        expect(output).toContain("Matched by: keyword");
-        expect(output).toContain("Score:");
+        expect(output).toContain("Rank");
+        expect(output).toContain("Chunk");
+        expect(output).toContain("Title");
+        expect(output).toContain("Path");
+        expect(output).toContain("Matched");
+        expect(output).toContain("Score");
+        expect(output).toContain("1");
+        expect(output).toContain("Alpha");
+        expect(output).toContain("alpha.md");
+        expect(output).toContain("┌");
+        expect(output).toContain("keyword");
+        expect(output).not.toContain("Snippet:");
       });
     });
   });
@@ -432,7 +443,7 @@ describe("GIVEN the search command", () => {
         });
 
         const output = await captureConsoleLog(async () => {
-          await createProgram().parseAsync(
+          await createProgram({ outputStream: { isTTY: true } }).parseAsync(
             [
               "node",
               "vaultgentic",
@@ -453,6 +464,7 @@ describe("GIVEN the search command", () => {
         expect(JSON.parse(output)).toMatchObject([
           {
             rank: 1,
+            chunkId: expect.any(Number),
             title: "Alpha",
             path: "alpha.md",
             headingPath: ["Alpha", "Details"],
@@ -491,7 +503,7 @@ describe("GIVEN the search command", () => {
         });
 
         const output = await captureConsoleLog(async () => {
-          await createProgram().parseAsync(
+          await createProgram({ outputStream: { isTTY: true } }).parseAsync(
             [
               "node",
               "vaultgentic",
@@ -514,6 +526,7 @@ describe("GIVEN the search command", () => {
             rank: 1,
             title: "Embedding Index",
             path: "search/embedding-index.md",
+            chunkId: null,
             aliases: ["Vector Lookup"],
             matchedBy: ["title"],
             score: expect.any(Number),
@@ -564,6 +577,7 @@ describe("GIVEN the search command", () => {
         expect(JSON.parse(output)).toMatchObject([
           {
             rank: 1,
+            chunkId: expect.any(Number),
             path: expect.any(String),
             title: expect.any(String),
             headingPath: expect.any(Array),
@@ -597,7 +611,7 @@ describe("GIVEN the search command", () => {
         });
 
         const output = await captureConsoleLog(async () => {
-          await createProgram().parseAsync(
+          await createProgram({ outputStream: { isTTY: true } }).parseAsync(
             [
               "node",
               "vaultgentic",
@@ -754,7 +768,7 @@ describe("GIVEN the search command", () => {
         });
 
         const output = await captureConsoleLog(async () => {
-          await createProgram().parseAsync(
+          await createProgram({ outputStream: { isTTY: true } }).parseAsync(
             [
               "node",
               "vaultgentic",
@@ -770,10 +784,16 @@ describe("GIVEN the search command", () => {
           );
         });
 
-        expect(output).toContain("1. Alpha");
-        expect(output).toContain("Path: alpha.md");
-        expect(output).toContain("Matched by: title");
-        expect(output).toContain("Score:");
+        expect(output).toContain("Rank");
+        expect(output).toContain("Chunk");
+        expect(output).toContain("1");
+        expect(output).toContain("Alpha");
+        expect(output).toContain("alpha.md");
+        expect(output).toContain("note");
+        expect(output).toContain("┌");
+        expect(output).toContain("Matched");
+        expect(output).toContain("title");
+        expect(output).toContain("Score");
         expect(output).not.toContain("Snippet:");
       });
     });
