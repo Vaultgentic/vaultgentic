@@ -7,6 +7,7 @@ export const schemaVersion = 1;
 export type SearchDatabaseConfig = {
   vaultPath: string;
   databasePath: string;
+  ignoredPaths?: string[];
 };
 
 export type DatabaseStatus = {
@@ -83,6 +84,17 @@ export function initializeSearchDatabase(
         CREATE INDEX IF NOT EXISTS idx_chunks_path ON chunks(path);
       `);
 
+      if (isFts5Available(database)) {
+        database.exec(`
+          CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+            path,
+            title,
+            heading_path,
+            text
+          );
+        `);
+      }
+
       const insertMetadata = database.prepare(
         "INSERT OR IGNORE INTO index_metadata (key, value) VALUES (?, ?)",
       );
@@ -120,7 +132,7 @@ export function initializeSearchDatabase(
         ok: true,
         walEnabled: readJournalMode(database) === "wal",
         foreignKeysEnabled: readForeignKeys(database),
-        fts5Available: hasCompileOption(database, "ENABLE_FTS5"),
+        fts5Available: isFts5Available(database),
         sqliteVecAvailable: isSqliteVecAvailable(database),
       },
     };
@@ -200,6 +212,19 @@ function hasCompileOption(
   return (
     database.pragma("compile_options") as Array<{ compile_options: string }>
   ).some((row) => row.compile_options === option);
+}
+
+function isFts5Available(database: Database.Database): boolean {
+  if (hasCompileOption(database, "ENABLE_FTS5")) {
+    return true;
+  }
+
+  try {
+    database.prepare("SELECT fts5(?) AS value").get("check");
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isSqliteVecAvailable(database: Database.Database): boolean {

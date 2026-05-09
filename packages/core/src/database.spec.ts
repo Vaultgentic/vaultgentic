@@ -31,8 +31,12 @@ describe("GIVEN SQLite search database initialization", () => {
 
         const database = new Database(databasePath, { readonly: true });
         try {
+          const expectedTables = ["index_metadata", "notes", "chunks"];
+          if (status.sqlite.fts5Available) {
+            expectedTables.push("chunks_fts");
+          }
           expect(readTableNames(database)).toEqual(
-            expect.arrayContaining(["index_metadata", "notes", "chunks"]),
+            expect.arrayContaining(expectedTables),
           );
           expect(readMetadata(database)).toMatchObject({
             schema_version: String(schemaVersion),

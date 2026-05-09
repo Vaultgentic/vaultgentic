@@ -31,3 +31,13 @@ export {
   type ParsedMarkdownNote,
   type WikiLink,
 } from "./markdown.js";
+
+export {
+  indexVaultFile,
+  openSearchDatabase,
+  searchBm25,
+  syncSearchIndex,
+  type Bm25SearchResult,
+  type IndexFileResult,
+  type SyncSearchIndexResult,
+} from "./indexer.js";
