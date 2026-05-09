@@ -1,11 +1,13 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import {
   indexVaultFile,
   initializeSearchDatabase,
   loadConfig,
+  searchBm25,
   syncSearchIndex,
   vaultgenticCoreName,
+  type Bm25SearchResult,
   type DatabaseStatus,
 } from "@vaultgentic/core";
 import { createRequire } from "node:module";
@@ -90,7 +92,101 @@ export function createProgram(): Command {
       console.log(formatStatus(status));
     });
 
+  program
+    .command("search")
+    .argument("<query>", "Keyword query text")
+    .description("Search indexed vault notes")
+    .option("--config <path>", "Path to config file")
+    .option("--json", "Print JSON output")
+    .option("--mode <mode>", "Search mode", parseSearchMode, "keyword")
+    .option("--limit <number>", "Maximum result count", parseSearchLimit)
+    .option("--scores", "Show scores in human output")
+    .action(
+      async (
+        query: string,
+        options: {
+          config?: string;
+          json?: boolean;
+          mode: "keyword";
+          limit?: number;
+          scores?: boolean;
+        },
+      ) => {
+        const config = await loadConfig({ configPath: options.config });
+        const results = searchBm25(config, { query, limit: options.limit });
+        const output = results.map(toKeywordSearchOutput);
+
+        if (options.json === true) {
+          console.log(JSON.stringify(output, null, 2));
+          return;
+        }
+
+        console.log(
+          formatSearchResults(output, { showScores: options.scores }),
+        );
+      },
+    );
+
   return program;
+}
+
+type KeywordSearchOutput = Bm25SearchResult & {
+  matchedBy: ["keyword"];
+};
+
+function parseSearchMode(mode: string): "keyword" {
+  if (mode === "keyword") {
+    return mode;
+  }
+
+  throw new InvalidArgumentError(`Unsupported search mode: ${mode}`);
+}
+
+function parseSearchLimit(value: string): number {
+  const limit = Number(value);
+  if (!Number.isInteger(limit) || limit < 1) {
+    throw new InvalidArgumentError("Search limit must be a positive integer");
+  }
+
+  return limit;
+}
+
+function toKeywordSearchOutput(result: Bm25SearchResult): KeywordSearchOutput {
+  return { ...result, matchedBy: ["keyword"] };
+}
+
+function formatSearchResults(
+  results: KeywordSearchOutput[],
+  options: { showScores?: boolean },
+): string {
+  if (results.length === 0) {
+    return "No results.";
+  }
+
+  return results
+    .map((result) => formatSearchResult(result, options))
+    .join("\n\n");
+}
+
+function formatSearchResult(
+  result: KeywordSearchOutput,
+  options: { showScores?: boolean },
+): string {
+  const lines = [
+    `${result.rank}. ${result.title}`,
+    `Path: ${result.path}`,
+    ...(result.headingPath.length > 0
+      ? [`Heading: ${result.headingPath.join(" > ")}`]
+      : []),
+    `Snippet: ${result.snippet}`,
+    `Matched by: ${result.matchedBy.join(", ")}`,
+  ];
+
+  if (options.showScores === true) {
+    lines.push(`Score: ${result.score}`);
+  }
+
+  return lines.join("\n");
 }
 
 function formatIndexFileResult(result: {
