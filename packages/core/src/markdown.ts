@@ -1,4 +1,5 @@
 import matter from "gray-matter";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 export type ParsedMarkdownNote = {
@@ -10,6 +11,18 @@ export type ParsedMarkdownNote = {
   links: WikiLink[];
   headings: MarkdownHeading[];
   bodyText: string;
+  bodyStartLine: number;
+};
+
+export type MarkdownChunk = {
+  path: string;
+  title: string;
+  headingPath: string[];
+  text: string;
+  content_hash: string;
+  index: number;
+  start_line?: number;
+  end_line?: number;
 };
 
 export type WikiLink = {
@@ -43,7 +56,347 @@ export function parseMarkdownNote(input: {
     links: readLinks(metadataText),
     headings: readHeadings(metadataText, parsedMatter.bodyStartLine),
     bodyText,
+    bodyStartLine: parsedMatter.bodyStartLine,
   };
+}
+
+const targetChunkLength = 1600;
+const maxChunkLength = 2400;
+const overlapLength = 220;
+const maxContextValueLength = 320;
+
+export function chunkMarkdownNote(note: ParsedMarkdownNote): MarkdownChunk[] {
+  return buildHeadingSections(note)
+    .flatMap((section) => splitSection(note, section))
+    .map((chunk, index) => ({
+      ...chunk,
+      index,
+      content_hash: hashChunk(chunk.text),
+    }));
+}
+
+type ChunkDraft = Omit<MarkdownChunk, "content_hash" | "index">;
+
+type HeadingSection = {
+  headingPath: string[];
+  lines: string[];
+  startLine: number;
+  endLine: number;
+};
+
+function buildHeadingSections(note: ParsedMarkdownNote): HeadingSection[] {
+  const bodyLines = note.bodyText.split(/\r?\n/);
+  const headingsByLine = new Map(
+    note.headings.map((heading) => [heading.line, heading]),
+  );
+  const sections: HeadingSection[] = [];
+  const headingStack: MarkdownHeading[] = [];
+  let current: HeadingSection | undefined;
+
+  for (const [index, line] of bodyLines.entries()) {
+    const lineNumber = note.bodyStartLine + index;
+    const heading = headingsByLine.get(lineNumber);
+
+    if (heading !== undefined) {
+      if (current !== undefined && hasMeaningfulText(current.lines)) {
+        sections.push(current);
+      }
+
+      while (
+        headingStack.length > 0 &&
+        headingStack[headingStack.length - 1].depth >= heading.depth
+      ) {
+        headingStack.pop();
+      }
+      headingStack.push(heading);
+
+      current = {
+        headingPath: headingStack.map((entry) => entry.text),
+        lines: [line],
+        startLine: lineNumber,
+        endLine: lineNumber,
+      };
+      continue;
+    }
+
+    if (current === undefined) {
+      current = {
+        headingPath: [],
+        lines: [],
+        startLine: lineNumber,
+        endLine: lineNumber,
+      };
+    }
+
+    current.lines.push(line);
+    current.endLine = lineNumber;
+  }
+
+  if (current !== undefined && hasMeaningfulText(current.lines)) {
+    sections.push(current);
+  }
+
+  return sections.length === 0
+    ? [
+        {
+          headingPath: [],
+          lines: [],
+          startLine: note.bodyStartLine,
+          endLine: note.bodyStartLine,
+        },
+      ]
+    : sections;
+}
+
+function splitSection(
+  note: ParsedMarkdownNote,
+  section: HeadingSection,
+): ChunkDraft[] {
+  const context = buildChunkContext(note, section.headingPath);
+  const maxBodyLength = Math.max(1, maxChunkLength - context.length - 2);
+  const targetBodyLength = Math.max(1, targetChunkLength - context.length - 2);
+  const paragraphs = splitParagraphs(section);
+  const chunks: ChunkDraft[] = [];
+  let currentText = "";
+  let currentStartLine = section.startLine;
+  let currentEndLine = section.startLine;
+
+  if (paragraphs.length === 0) {
+    return [
+      {
+        path: note.path,
+        title: note.title,
+        headingPath: section.headingPath,
+        text: context,
+        start_line: section.startLine,
+        end_line: section.endLine,
+      },
+    ];
+  }
+
+  for (const paragraph of paragraphs) {
+    const parts = splitParagraphIntoParts(paragraph, maxBodyLength);
+
+    for (const part of parts) {
+      const separator = currentText === "" ? "" : "\n\n";
+
+      if (
+        currentText !== "" &&
+        currentText.length + separator.length + part.text.length >
+          targetBodyLength
+      ) {
+        chunks.push({
+          path: note.path,
+          title: note.title,
+          headingPath: section.headingPath,
+          text: joinChunkText(context, currentText),
+          start_line: currentStartLine,
+          end_line: currentEndLine,
+        });
+        currentText = makeOverlap(currentText);
+        if (
+          currentText.length + separator.length + part.text.length >
+          maxBodyLength
+        ) {
+          currentText = "";
+          currentStartLine = part.startLine;
+        }
+      }
+
+      if (currentText === "") {
+        currentStartLine = part.startLine;
+        currentText = part.text;
+      } else {
+        currentText = `${currentText}${separator}${part.text}`;
+      }
+      currentEndLine = part.endLine;
+    }
+  }
+
+  if (currentText !== "") {
+    chunks.push({
+      path: note.path,
+      title: note.title,
+      headingPath: section.headingPath,
+      text: joinChunkText(context, currentText),
+      start_line: currentStartLine,
+      end_line: currentEndLine,
+    });
+  }
+
+  return chunks;
+}
+
+type Paragraph = {
+  text: string;
+  startLine: number;
+  endLine: number;
+};
+
+function splitParagraphs(section: HeadingSection): Paragraph[] {
+  const paragraphs: Paragraph[] = [];
+  let lines: string[] = [];
+  let startLine = section.startLine;
+
+  for (const [index, line] of section.lines.entries()) {
+    const lineNumber = section.startLine + index;
+
+    if (line.trim() === "") {
+      if (hasMeaningfulText(lines)) {
+        paragraphs.push({
+          text: lines.join("\n"),
+          startLine,
+          endLine: lineNumber - 1,
+        });
+      }
+      lines = [];
+      startLine = lineNumber + 1;
+      continue;
+    }
+
+    if (lines.length === 0) {
+      startLine = lineNumber;
+    }
+    lines.push(line);
+  }
+
+  if (hasMeaningfulText(lines)) {
+    paragraphs.push({
+      text: lines.join("\n"),
+      startLine,
+      endLine: section.endLine,
+    });
+  }
+
+  return paragraphs;
+}
+
+function splitParagraphIntoParts(
+  paragraph: Paragraph,
+  maxLength: number,
+): Paragraph[] {
+  if (paragraph.text.length <= maxLength) {
+    return [paragraph];
+  }
+
+  const lines = paragraph.text.split("\n");
+  if (lines.length === 1) {
+    return splitLongText(paragraph.text, maxLength).map((text) => ({
+      text,
+      startLine: paragraph.startLine,
+      endLine: paragraph.endLine,
+    }));
+  }
+
+  const parts: Paragraph[] = [];
+  let currentLines: string[] = [];
+  let currentStartLine = paragraph.startLine;
+
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = paragraph.startLine + index;
+    const nextText =
+      currentLines.length === 0 ? line : `${currentLines.join("\n")}\n${line}`;
+
+    if (line.length > maxLength) {
+      pushParagraphPart(parts, currentLines, currentStartLine, lineNumber - 1);
+      currentLines = [];
+      for (const text of splitLongText(line, maxLength)) {
+        parts.push({ text, startLine: lineNumber, endLine: lineNumber });
+      }
+      currentStartLine = lineNumber + 1;
+      continue;
+    }
+
+    if (currentLines.length > 0 && nextText.length > maxLength) {
+      pushParagraphPart(parts, currentLines, currentStartLine, lineNumber - 1);
+      currentLines = [line];
+      currentStartLine = lineNumber;
+      continue;
+    }
+
+    if (currentLines.length === 0) {
+      currentStartLine = lineNumber;
+    }
+    currentLines.push(line);
+  }
+
+  pushParagraphPart(parts, currentLines, currentStartLine, paragraph.endLine);
+  return parts;
+}
+
+function pushParagraphPart(
+  parts: Paragraph[],
+  lines: string[],
+  startLine: number,
+  endLine: number,
+): void {
+  if (hasMeaningfulText(lines)) {
+    parts.push({ text: lines.join("\n"), startLine, endLine });
+  }
+}
+
+function splitLongText(text: string, maxLength: number): string[] {
+  if (text.length <= maxLength) {
+    return [text];
+  }
+
+  const chunks: string[] = [];
+  let start = 0;
+
+  while (start < text.length) {
+    const end = Math.min(start + maxLength, text.length);
+    chunks.push(text.slice(start, end));
+    if (end === text.length) {
+      break;
+    }
+    start = Math.max(end - overlapLength, start + 1);
+  }
+
+  return chunks.filter((chunk) => chunk !== "");
+}
+
+function buildChunkContext(
+  note: ParsedMarkdownNote,
+  headingPath: string[],
+): string {
+  return [
+    `Title: ${compactContextValue(note.title)}`,
+    `Path: ${compactContextValue(note.path)}`,
+    headingPath.length > 0
+      ? `Headings: ${compactContextValue(headingPath.join(" > "))}`
+      : undefined,
+    note.tags.length > 0
+      ? `Tags: ${compactContextValue(note.tags.join(", "))}`
+      : undefined,
+  ]
+    .filter((line) => line !== undefined)
+    .join("\n");
+}
+
+function compactContextValue(value: string): string {
+  return value.length <= maxContextValueLength
+    ? value
+    : `${value.slice(0, maxContextValueLength - 1)}…`;
+}
+
+function joinChunkText(context: string, body: string): string {
+  return `${context}\n\n${body}`.trim();
+}
+
+function makeOverlap(text: string): string {
+  if (text.length <= overlapLength) {
+    return text;
+  }
+
+  return text.slice(-overlapLength).trimStart();
+}
+
+function hashChunk(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+function hasMeaningfulText(lines: string[]): boolean {
+  return lines.some((line) => line.trim() !== "");
 }
 
 function parseFrontmatter(content: string): {

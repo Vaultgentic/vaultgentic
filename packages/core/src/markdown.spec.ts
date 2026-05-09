@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseMarkdownNote } from "./markdown.js";
+import { chunkMarkdownNote, parseMarkdownNote } from "./markdown.js";
 
 describe("GIVEN Markdown note parsing", () => {
   describe("WHEN a note has frontmatter metadata", () => {
@@ -240,4 +240,111 @@ title: [
       });
     });
   });
+
+  describe("WHEN a parsed note is chunked", () => {
+    describe("THEN chunks preserve compact retrieval context", () => {
+      test("SHOULD include metadata, nested headings, line metadata, and stable hashes", () => {
+        const note = parseMarkdownNote({
+          path: "folder/source.md",
+          content: `---
+title: Source Title
+tags:
+  - agent/search
+---
+# Parent
+Parent body.
+
+## Child
+Child body with #inline-tag.
+`,
+        });
+
+        const chunks = chunkMarkdownNote(note);
+        const childChunk = chunks.find((chunk) =>
+          chunk.headingPath.includes("Child"),
+        );
+
+        expect(childChunk).toMatchObject({
+          path: "folder/source.md",
+          title: "Source Title",
+          headingPath: ["Parent", "Child"],
+          index: 1,
+          start_line: 9,
+          end_line: 10,
+        });
+        expect(childChunk?.text).toContain("Title: Source Title");
+        expect(childChunk?.text).toContain("Path: folder/source.md");
+        expect(childChunk?.text).toContain("Headings: Parent > Child");
+        expect(childChunk?.text).toContain("Tags: agent/search, inline-tag");
+        expect(childChunk?.text).toContain("Child body with #inline-tag.");
+        expect(childChunk?.content_hash).toMatch(/^[a-f0-9]{64}$/);
+        expect(chunkMarkdownNote(note)).toEqual(chunks);
+      });
+
+      test("SHOULD split long text into smaller agent-readable chunks with overlap", () => {
+        const longText = "a".repeat(5000);
+        const note = parseMarkdownNote({
+          path: "long.md",
+          content: longText,
+        });
+
+        const chunks = chunkMarkdownNote(note);
+        const firstBody = readChunkBody(chunks[0].text);
+        const secondBody = readChunkBody(chunks[1].text);
+
+        expect(chunks.length).toBeGreaterThan(1);
+        expect(chunks.every((chunk) => chunk.text.length <= 2400)).toBe(true);
+        expect(secondBody.startsWith(firstBody.slice(-220))).toBe(true);
+        expect(chunks.map((chunk) => chunk.index)).toEqual([0, 1, 2]);
+      });
+
+      test("SHOULD create a metadata chunk for frontmatter-only notes", () => {
+        const note = parseMarkdownNote({
+          path: "metadata.md",
+          content: `---
+title: Metadata Only
+tags:
+  - context
+---
+`,
+        });
+
+        const chunks = chunkMarkdownNote(note);
+
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0]).toMatchObject({
+          path: "metadata.md",
+          title: "Metadata Only",
+          headingPath: [],
+          index: 0,
+          start_line: 6,
+          end_line: 6,
+        });
+        expect(chunks[0].text).toBe(
+          "Title: Metadata Only\nPath: metadata.md\nTags: context",
+        );
+      });
+
+      test("SHOULD keep chunks below the max size when metadata is long", () => {
+        const note = parseMarkdownNote({
+          path: `${"deep/".repeat(200)}metadata.md`,
+          content: `---
+title: ${"Long Title ".repeat(500)}
+tags:
+  - ${"long-tag".repeat(500)}
+---
+`,
+        });
+
+        const chunks = chunkMarkdownNote(note);
+
+        expect(chunks).toHaveLength(1);
+        expect(chunks[0].text.length).toBeLessThanOrEqual(2400);
+      });
+    });
+  });
 });
+
+function readChunkBody(text: string): string {
+  return text.split("\n\n").slice(1).join("\n\n");
+}

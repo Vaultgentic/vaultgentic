@@ -24,7 +24,9 @@ export {
 } from "./scanner.js";
 
 export {
+  chunkMarkdownNote,
   parseMarkdownNote,
+  type MarkdownChunk,
   type MarkdownHeading,
   type ParsedMarkdownNote,
   type WikiLink,
