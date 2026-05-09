@@ -147,11 +147,12 @@ describe("GIVEN Vaultgentic config loading", () => {
         const cwd = await mkdtemp(
           path.join(tmpdir(), "vaultgentic-missing-config-"),
         );
+        const configPath = path.join(cwd, "missing-config.json");
 
-        await expect(loadConfig({ cwd })).rejects.toThrow(
-          getDefaultConfigPath(),
+        await expect(loadConfig({ configPath, cwd })).rejects.toThrow(
+          configPath,
         );
-        await expect(loadConfig({ cwd })).rejects.toBeInstanceOf(
+        await expect(loadConfig({ configPath, cwd })).rejects.toBeInstanceOf(
           ConfigServiceError,
         );
       });
