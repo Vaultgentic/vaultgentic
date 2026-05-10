@@ -1,9 +1,11 @@
 import type {
   RefreshSearchIndexResult,
+  SearchFilterDiagnostics,
   SearchMode,
   SearchOutput,
   searchVault,
 } from "@vaultgentic/core";
+import { readSearchFilterDiagnostics } from "@vaultgentic/core";
 import { z } from "zod";
 import type { McpServerConfig } from "../types.js";
 import {
@@ -40,6 +42,7 @@ export type SearchToolResponse = {
   query: string;
   mode: SearchMode;
   results: CompactSearchResult[];
+  filterDiagnostics?: SearchFilterDiagnostics;
   scoreMetadata?: SearchScoreMetadata;
   indexStatus: CompactIndexStatus;
   refresh: CompactRefreshSummary;
@@ -58,6 +61,7 @@ export function createSearchToolHandler(options: {
   config: McpServerConfig;
   ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
   search: typeof searchVault;
+  readFilterDiagnostics?: typeof readSearchFilterDiagnostics;
 }): (input: SearchToolInput) => Promise<SearchToolResponse> {
   return async (input) => {
     try {
@@ -71,12 +75,21 @@ export function createSearchToolHandler(options: {
         tags: parsedInput.tags,
       });
 
+      const filterDiagnostics =
+        results.length === 0 && hasSearchFilters(parsedInput)
+          ? (options.readFilterDiagnostics ?? readSearchFilterDiagnostics)(
+              options.config,
+              parsedInput,
+            )
+          : undefined;
+
       return {
         query: parsedInput.query,
         mode: parsedInput.mode,
         results: results.map((result) =>
           compactSearchResult(result, parsedInput),
         ),
+        ...(filterDiagnostics === undefined ? {} : { filterDiagnostics }),
         ...(parsedInput.includeScores === true
           ? { scoreMetadata: searchScoreMetadata }
           : {}),
@@ -87,6 +100,13 @@ export function createSearchToolHandler(options: {
       throw toMcpToolError(error);
     }
   };
+}
+
+function hasSearchFilters(input: SearchToolInput): boolean {
+  return (
+    input.scope !== undefined ||
+    (input.tags !== undefined && input.tags.length > 0)
+  );
 }
 
 function compactSearchResult(

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeSearchDatabase } from "./database.js";
-import { refreshSearchIndex } from "./indexer.js";
+import { readSearchFilterDiagnostics, refreshSearchIndex } from "./indexer.js";
 import { searchVault } from "./search.js";
 
 describe("GIVEN shared vault search", () => {
@@ -61,6 +61,67 @@ describe("GIVEN shared vault search", () => {
         expect(results.map((result) => result.path)).toEqual([
           "projects/alpha.md",
         ]);
+      });
+
+      it("SHOULD report filter diagnostics for unmatched scopes and tags", async () => {
+        const config = await createSearchFixture("search-filter-diagnostics");
+        await writeNote(
+          config.vaultPath,
+          "projects/alpha.md",
+          "---\ntags:\n  - project\n---\n\n# Alpha\n\nsharedneedle alpha",
+        );
+        initializeSearchDatabase(config);
+        await refreshSearchIndex(config);
+
+        const diagnostics = readSearchFilterDiagnostics(config, {
+          scope: "missing/",
+          tags: ["absent"],
+        });
+
+        expect(diagnostics).toEqual({
+          appliedFilters: { scope: "missing/", tags: ["absent"] },
+          matchedNoteCounts: {
+            allFilters: 0,
+            scope: 0,
+            tags: { absent: 0 },
+          },
+          warnings: [
+            "No indexed notes match scope: missing/",
+            "No indexed notes match tag: absent",
+          ],
+        });
+      });
+
+      it("SHOULD warn when filters match separately but not together", async () => {
+        const config = await createSearchFixture(
+          "search-combined-filter-diagnostics",
+        );
+        await writeNote(
+          config.vaultPath,
+          "projects/alpha.md",
+          "---\ntags:\n  - project\n---\n\n# Alpha\n\nsharedneedle alpha",
+        );
+        await writeNote(
+          config.vaultPath,
+          "archive/beta.md",
+          "---\ntags:\n  - archived\n---\n\n# Beta\n\nsharedneedle beta",
+        );
+        initializeSearchDatabase(config);
+        await refreshSearchIndex(config);
+
+        const diagnostics = readSearchFilterDiagnostics(config, {
+          scope: "projects/",
+          tags: ["archived"],
+        });
+
+        expect(diagnostics).toMatchObject({
+          matchedNoteCounts: {
+            allFilters: 0,
+            scope: 1,
+            tags: { archived: 1 },
+          },
+          warnings: ["No indexed notes match all applied filters"],
+        });
       });
     });
   });

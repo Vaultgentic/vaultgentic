@@ -107,6 +107,19 @@ export type TitleSearchResult = {
   rank: number;
 };
 
+export type SearchFilterDiagnostics = {
+  appliedFilters: {
+    scope?: string;
+    tags: string[];
+  };
+  matchedNoteCounts: {
+    allFilters: number;
+    scope?: number;
+    tags: Record<string, number>;
+  };
+  warnings: string[];
+};
+
 type SearchFilterOptions = {
   scope?: string;
   tags?: string[];
@@ -662,6 +675,73 @@ export function searchTitles(
     }));
   } catch (error) {
     throw toSearchIndexerError("Failed to search note titles", error);
+  } finally {
+    database?.close();
+  }
+}
+
+export function readSearchFilterDiagnostics(
+  config: SearchDatabaseConfig,
+  options: SearchFilterOptions,
+): SearchFilterDiagnostics {
+  const tags = options.tags ?? [];
+  let database: Database.Database | undefined;
+  try {
+    database = openSearchDatabase(config);
+    const activeDatabase = database;
+    const filters = buildSearchFilterSql("notes", options);
+    const allFilters = readFilteredNoteCount(activeDatabase, filters);
+    const scope =
+      options.scope === undefined
+        ? undefined
+        : readFilteredNoteCount(
+            activeDatabase,
+            buildSearchFilterSql("notes", {
+              scope: options.scope,
+            }),
+          );
+    const tagCounts = Object.fromEntries(
+      tags.map((tag) => [
+        tag,
+        readFilteredNoteCount(
+          activeDatabase,
+          buildSearchFilterSql("notes", { tags: [tag] }),
+        ),
+      ]),
+    );
+    const individualWarnings = [
+      ...(options.scope !== undefined && scope === 0
+        ? [`No indexed notes match scope: ${options.scope}`]
+        : []),
+      ...Object.entries(tagCounts)
+        .filter(([, count]) => count === 0)
+        .map(([tag]) => `No indexed notes match tag: ${tag}`),
+    ];
+    const appliedFilterCount =
+      (options.scope === undefined ? 0 : 1) + tags.length;
+    const warnings = [
+      ...individualWarnings,
+      ...(allFilters === 0 &&
+      appliedFilterCount > 1 &&
+      individualWarnings.length === 0
+        ? ["No indexed notes match all applied filters"]
+        : []),
+    ];
+
+    return {
+      appliedFilters: { scope: options.scope, tags },
+      matchedNoteCounts: {
+        allFilters,
+        ...(scope === undefined ? {} : { scope }),
+        tags: tagCounts,
+      },
+      warnings,
+    };
+  } catch (error) {
+    throw toSearchIndexerError(
+      "Failed to read search filter diagnostics",
+      error,
+    );
   } finally {
     database?.close();
   }
@@ -1424,6 +1504,23 @@ function buildSearchFilterSql(
     sql: conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "",
     params,
   };
+}
+
+function readFilteredNoteCount(
+  database: Database.Database,
+  filters: { sql: string; params: string[] },
+): number {
+  const row = database
+    .prepare(
+      `
+        SELECT COUNT(*) AS count
+        FROM notes
+        ${filters.sql === "" ? "" : `WHERE ${filters.sql.slice(5)}`}
+      `,
+    )
+    .get(...filters.params) as { count: number };
+
+  return row.count;
 }
 
 function scoreTitleMatch(

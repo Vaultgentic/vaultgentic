@@ -1,5 +1,13 @@
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
+import {
+  initializeSearchDatabase,
+  refreshSearchIndex,
+} from "@vaultgentic/core";
 import { describe, expect, it } from "vitest";
+import { readSearchFilterDiagnostics } from "../../../../packages/core/src/indexer.js";
 import { createSearchToolHandler, searchToolInputSchema } from "./search.js";
 import { toMcpToolError } from "./shared.js";
 
@@ -80,6 +88,42 @@ describe("GIVEN the MCP search tool", () => {
         expect(response.scoreMetadata).toMatchObject({
           kind: "relevance",
           higherIsBetter: true,
+        });
+      });
+
+      it("SHOULD include diagnostics when filters produce empty results", async () => {
+        const config = await createSearchFixture("mcp-filter-diagnostics");
+        await writeNote(
+          config.vaultPath,
+          "projects/alpha.md",
+          "---\ntags:\n  - project\n---\n\n# Alpha\n\nsharedneedle alpha",
+        );
+        initializeSearchDatabase(config);
+        await refreshSearchIndex(config);
+        const search = createSearchToolHandler({
+          config,
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => [],
+          readFilterDiagnostics: readSearchFilterDiagnostics,
+        });
+
+        const response = await search({
+          query: "sharedneedle",
+          scope: "missing/",
+          tags: ["absent"],
+        });
+
+        expect(response.filterDiagnostics).toEqual({
+          appliedFilters: { scope: "missing/", tags: ["absent"] },
+          matchedNoteCounts: {
+            allFilters: 0,
+            scope: 0,
+            tags: { absent: 0 },
+          },
+          warnings: [
+            "No indexed notes match scope: missing/",
+            "No indexed notes match tag: absent",
+          ],
         });
       });
 
@@ -182,6 +226,28 @@ function createRefreshResult(indexed: number): RefreshSearchIndexResult {
       },
     },
   };
+}
+
+async function createSearchFixture(name: string) {
+  const cwd = await mkdtemp(path.join(tmpdir(), `vaultgentic-${name}-`));
+  const vaultPath = path.join(cwd, "vault");
+  await mkdir(vaultPath);
+
+  return {
+    vaultPath,
+    databasePath: path.join(cwd, "index.sqlite"),
+    searchLimit: 5,
+  };
+}
+
+async function writeNote(
+  vaultPath: string,
+  relativePath: string,
+  content: string,
+): Promise<void> {
+  const notePath = path.join(vaultPath, relativePath);
+  await mkdir(path.dirname(notePath), { recursive: true });
+  await writeFile(notePath, content);
 }
 
 function createSearchResult(score: number): SearchOutput {
