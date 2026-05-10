@@ -20,6 +20,7 @@ import {
   mcpToolPrefix,
   plannedMcpToolNames,
   sharedCorePackageName,
+  toMcpToolError,
 } from "./tools/shared.js";
 import {
   createReadToolHandler,
@@ -117,21 +118,13 @@ export async function createVaultgenticMcpServer(
     "vaultgentic_search",
     "Search indexed vault notes",
     searchToolInputSchema.shape,
-    async (input) => ({
-      content: [
-        { type: "text", text: JSON.stringify(await search(input), null, 2) },
-      ],
-    }),
+    async (input) => toMcpToolResult(search(input)),
   );
   server.tool(
     "vaultgentic_read",
     "Read a vault note or indexed chunk",
     readToolInputSchema.shape,
-    async (input) => ({
-      content: [
-        { type: "text", text: JSON.stringify(await read(input), null, 2) },
-      ],
-    }),
+    async (input) => toMcpToolResult(read(input)),
   );
 
   return {
@@ -143,6 +136,28 @@ export async function createVaultgenticMcpServer(
     server,
     toolNames: ["vaultgentic_search", "vaultgentic_read"],
   };
+}
+
+async function toMcpToolResult(result: Promise<unknown>) {
+  try {
+    return {
+      content: [
+        { type: "text" as const, text: JSON.stringify(await result, null, 2) },
+      ],
+    };
+  } catch (error) {
+    const toolError = toMcpToolError(error);
+    return {
+      isError: true,
+      structuredContent: toolError.details,
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify(toolError.details, null, 2),
+        },
+      ],
+    };
+  }
 }
 
 export async function startVaultgenticMcpServer(

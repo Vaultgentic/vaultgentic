@@ -282,6 +282,8 @@ function toErrorJson(
 }
 
 function formatSuggestion(message: string): string[] {
+  const normalizedMessage = message.toLowerCase();
+
   if (message.includes("use --force")) {
     return ["", "Try again with --force when running non-interactively."];
   }
@@ -290,6 +292,62 @@ function formatSuggestion(message: string): string[] {
     return [
       "",
       "Pass --config <path> or create a config at the default location.",
+    ];
+  }
+
+  if (normalizedMessage.includes("invalid config")) {
+    return [
+      "",
+      "Check that the config JSON includes vaultPath and databasePath.",
+    ];
+  }
+
+  if (
+    normalizedMessage.includes("outside the vault") ||
+    normalizedMessage.includes("inside the vault") ||
+    normalizedMessage.includes("invalid read path")
+  ) {
+    return [
+      "",
+      "Use a vault-relative path that stays inside the configured vault.",
+    ];
+  }
+
+  if (normalizedMessage.includes("unsupported search mode")) {
+    return ["", "Use one of: hybrid, keyword, semantic, title."];
+  }
+
+  if (
+    normalizedMessage.includes("search limit") ||
+    normalizedMessage.includes("max chars")
+  ) {
+    return ["", "Use a positive whole number for this option."];
+  }
+
+  if (normalizedMessage.includes("sqlite fts5")) {
+    return ["", "Rebuild the index with a SQLite build that supports FTS5."];
+  }
+
+  if (normalizedMessage.includes("sqlite-vec")) {
+    return ["", "Install or enable sqlite-vec, then rebuild the search index."];
+  }
+
+  if (normalizedMessage.includes("full reindex required")) {
+    return ["", "Run a full index rebuild before searching again."];
+  }
+
+  if (normalizedMessage.includes("read target")) {
+    return ["", "Use a numeric chunk ID or a vault-relative .md note path."];
+  }
+
+  if (normalizedMessage.includes("embedding")) {
+    return ["", "Check the local embedding model setup, then retry indexing."];
+  }
+
+  if (normalizedMessage.includes("not found")) {
+    return [
+      "",
+      "Refresh or rebuild the index, then check that the target still exists.",
     ];
   }
 

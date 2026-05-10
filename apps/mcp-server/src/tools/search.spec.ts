@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createSearchToolHandler, searchToolInputSchema } from "./search.js";
+import { toMcpToolError } from "./shared.js";
 import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
 
 describe("GIVEN the MCP search tool", () => {
@@ -43,6 +44,63 @@ describe("GIVEN the MCP search tool", () => {
         expect(
           searchToolInputSchema.safeParse({ query: "x".repeat(1_001) }).success,
         ).toBe(false);
+      });
+
+      it("SHOULD throw structured safe errors", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => {
+            throw new Error("SQLite FTS5 is not available for BM25 indexing");
+          },
+        });
+
+        await expect(search({ query: "alpha" })).rejects.toMatchObject({
+          name: "VaultgenticMcpToolError",
+          code: "fts_unavailable",
+          details: {
+            name: "Error",
+            message: "SQLite FTS5 is not available for BM25 indexing",
+            code: "fts_unavailable",
+            expected: false,
+          },
+        });
+      });
+
+      it("SHOULD classify invalid tool input errors", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => [],
+        });
+
+        await expect(search({ query: "" })).rejects.toMatchObject({
+          code: "invalid_tool_input",
+          expected: true,
+        });
+      });
+    });
+  });
+});
+
+describe("GIVEN MCP tool error shaping", () => {
+  describe("WHEN mapping expected core errors", () => {
+    describe("THEN callers receive structured details", () => {
+      it("SHOULD preserve expected flags without stack traces", () => {
+        const error = Object.assign(
+          new Error("Embedding metadata does not match; full reindex required"),
+          { expected: true as const },
+        );
+
+        const mcpError = toMcpToolError(error);
+
+        expect(mcpError.details).toEqual({
+          name: "Error",
+          message: "Embedding metadata does not match; full reindex required",
+          code: "embedding_error",
+          expected: true,
+        });
+        expect(mcpError.message).not.toContain("stack");
       });
     });
   });

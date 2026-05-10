@@ -4,7 +4,11 @@ import type {
   RefreshSearchIndexResult,
 } from "@vaultgentic/core";
 import { z } from "zod";
-import { compactIndexStatus, compactRefreshSummary } from "./shared.js";
+import {
+  compactIndexStatus,
+  compactRefreshSummary,
+  toMcpToolError,
+} from "./shared.js";
 import type { CompactIndexStatus, CompactRefreshSummary } from "./shared.js";
 import type { McpServerConfig } from "../types.js";
 
@@ -34,19 +38,23 @@ export function createReadToolHandler(options: {
   read: typeof readVaultTarget;
 }): (input: ReadToolInput) => Promise<ReadToolResponse> {
   return async (input) => {
-    const parsedInput = readToolInputSchema.parse(input);
-    const refreshResult = await options.ensureIndexFresh();
-    const result = await options.read(options.config, {
-      target: String(parsedInput.target),
-      maxChars: parsedInput.maxChars ?? defaultReadMaxChars,
-      withMetadata: parsedInput.includeMetadata,
-      withNoteContext: parsedInput.includeNoteContext,
-    });
+    try {
+      const parsedInput = readToolInputSchema.parse(input);
+      const refreshResult = await options.ensureIndexFresh();
+      const result = await options.read(options.config, {
+        target: String(parsedInput.target),
+        maxChars: parsedInput.maxChars ?? defaultReadMaxChars,
+        withMetadata: parsedInput.includeMetadata,
+        withNoteContext: parsedInput.includeNoteContext,
+      });
 
-    return {
-      result,
-      indexStatus: compactIndexStatus(refreshResult.status),
-      refresh: compactRefreshSummary(refreshResult.sync),
-    };
+      return {
+        result,
+        indexStatus: compactIndexStatus(refreshResult.status),
+        refresh: compactRefreshSummary(refreshResult.sync),
+      };
+    } catch (error) {
+      throw toMcpToolError(error);
+    }
   };
 }

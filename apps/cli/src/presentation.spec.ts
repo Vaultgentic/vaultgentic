@@ -90,6 +90,59 @@ describe("GIVEN CLI error presentation", () => {
     });
   });
 
+  describe("WITH known safe failure messages", () => {
+    describe("WHEN formatting user-facing errors", () => {
+      describe("THEN actionable suggestions are included", () => {
+        it("SHOULD explain outside-vault path rejection", () => {
+          const output = formatCliError(
+            new Error("Path must stay inside the vault: ../secret.md"),
+            {
+              color: false,
+              debug: false,
+              json: false,
+            },
+          );
+
+          expect(output).toContain(
+            "Use a vault-relative path that stays inside the configured vault.",
+          );
+        });
+
+        it("SHOULD explain invalid search modes", () => {
+          const output = formatCliError(
+            new Error("Unsupported search mode: fuzzy"),
+            {
+              color: false,
+              debug: false,
+              json: false,
+            },
+          );
+
+          expect(output).toContain(
+            "Use one of: hybrid, keyword, semantic, title.",
+          );
+        });
+
+        it("SHOULD explain missing vector support", () => {
+          const output = formatCliError(
+            new Error(
+              "sqlite-vec is not available for chunk embedding storage",
+            ),
+            {
+              color: false,
+              debug: false,
+              json: false,
+            },
+          );
+
+          expect(output).toContain(
+            "Install or enable sqlite-vec, then rebuild the search index.",
+          );
+        });
+      });
+    });
+  });
+
   describe("WITH color detection", () => {
     describe("WHEN output is not a TTY", () => {
       describe("THEN colors are disabled", () => {

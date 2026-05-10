@@ -89,6 +89,31 @@ describe("GIVEN the MCP read tool", () => {
           }).success,
         ).toBe(false);
       });
+
+      it("SHOULD throw structured path rejection errors", async () => {
+        const read = createReadToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          read: async () => {
+            throw Object.assign(
+              new Error(
+                "Invalid read path ../escape.md: Path must stay inside the vault",
+              ),
+              { expected: true as const },
+            );
+          },
+        });
+
+        await expect(read({ target: "../escape.md" })).rejects.toMatchObject({
+          name: "VaultgenticMcpToolError",
+          code: "path_rejected",
+          expected: true,
+          details: {
+            code: "path_rejected",
+            expected: true,
+          },
+        });
+      });
     });
   });
 });

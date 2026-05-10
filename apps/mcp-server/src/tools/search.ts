@@ -6,7 +6,11 @@ import type {
 } from "@vaultgentic/core";
 import { z } from "zod";
 import type { McpServerConfig } from "../types.js";
-import { compactIndexStatus, compactRefreshSummary } from "./shared.js";
+import {
+  compactIndexStatus,
+  compactRefreshSummary,
+  toMcpToolError,
+} from "./shared.js";
 import type { CompactIndexStatus, CompactRefreshSummary } from "./shared.js";
 
 export type SearchToolInput = z.infer<typeof searchToolInputSchema>;
@@ -49,25 +53,29 @@ export function createSearchToolHandler(options: {
   search: typeof searchVault;
 }): (input: SearchToolInput) => Promise<SearchToolResponse> {
   return async (input) => {
-    const parsedInput = searchToolInputSchema.parse(input);
-    const refreshResult = await options.ensureIndexFresh();
-    const results = await options.search(options.config, {
-      query: parsedInput.query,
-      limit: parsedInput.limit,
-      mode: parsedInput.mode,
-      scope: parsedInput.scope,
-      tags: parsedInput.tags,
-    });
+    try {
+      const parsedInput = searchToolInputSchema.parse(input);
+      const refreshResult = await options.ensureIndexFresh();
+      const results = await options.search(options.config, {
+        query: parsedInput.query,
+        limit: parsedInput.limit,
+        mode: parsedInput.mode,
+        scope: parsedInput.scope,
+        tags: parsedInput.tags,
+      });
 
-    return {
-      query: parsedInput.query,
-      mode: parsedInput.mode,
-      results: results.map((result) =>
-        compactSearchResult(result, parsedInput),
-      ),
-      indexStatus: compactIndexStatus(refreshResult.status),
-      refresh: compactRefreshSummary(refreshResult.sync),
-    };
+      return {
+        query: parsedInput.query,
+        mode: parsedInput.mode,
+        results: results.map((result) =>
+          compactSearchResult(result, parsedInput),
+        ),
+        indexStatus: compactIndexStatus(refreshResult.status),
+        refresh: compactRefreshSummary(refreshResult.sync),
+      };
+    } catch (error) {
+      throw toMcpToolError(error);
+    }
   };
 }
 
