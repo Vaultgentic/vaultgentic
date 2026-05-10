@@ -5,6 +5,9 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "vaultgentic-mcp-server": "dist/index.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -14,9 +17,12 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "lint": "biome lint .",
+    "start": "node dist/index.js",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@vaultgentic/core": "workspace:*"
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@vaultgentic/core": "workspace:*",
+    "zod": "^4.4.3"
   }
 }
