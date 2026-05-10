@@ -1,6 +1,13 @@
 import { mkdir, mkdtemp, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
+import type {
+  ReadVaultTargetOptions,
+  ReadVaultTargetResult,
+} from "@vaultgentic/core";
+import { VaultReadError } from "@vaultgentic/core";
 import { describe, expect, it } from "vitest";
 import {
   createMcpIndexRefreshCoordinator,
@@ -13,11 +20,6 @@ import {
   searchToolInputSchema,
   sharedCorePackageName,
 } from "./index.js";
-import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
-import type {
-  ReadVaultTargetOptions,
-  ReadVaultTargetResult,
-} from "@vaultgentic/core";
 
 describe("GIVEN the MCP server skeleton", () => {
   describe("WHEN creating the server from shared config", () => {
@@ -489,7 +491,135 @@ describe("GIVEN the MCP server skeleton", () => {
       });
     });
   });
+
+  describe("WHEN MCP callers invoke registered tools", () => {
+    describe("THEN registered callbacks return MCP-shaped results", () => {
+      it("SHOULD return known search hits through vaultgentic_search", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshIndex: async () => createRefreshResult(1),
+          search: async () => [createSearchResult({ score: 0.9 })],
+        });
+
+        const result = await callRegisteredTool(
+          mcpServer.server,
+          "vaultgentic_search",
+          {
+            query: "known hit",
+          },
+        );
+
+        expect(readToolJson(result)).toMatchObject({
+          results: [{ path: "notes/search.md", snippet: "A compact match" }],
+        });
+        expect(result.isError).toBeUndefined();
+      });
+
+      it("SHOULD return read content through vaultgentic_read", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshIndex: async () => createRefreshResult(1),
+          read: async () => createNoteReadResult({ content: "# Registered" }),
+        });
+
+        const result = await callRegisteredTool(
+          mcpServer.server,
+          "vaultgentic_read",
+          {
+            target: "alpha.md",
+          },
+        );
+
+        expect(readToolJson(result)).toMatchObject({
+          result: { type: "note", content: "# Registered" },
+        });
+        expect(result.isError).toBeUndefined();
+      });
+
+      it("SHOULD return structured sanitized errors through vaultgentic_read", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          read: async () => {
+            throw new VaultReadError("Note not found: missing.md");
+          },
+        });
+
+        const result = await callRegisteredTool(
+          mcpServer.server,
+          "vaultgentic_read",
+          {
+            target: "missing.md",
+          },
+        );
+
+        expect(result.isError).toBe(true);
+        expect(result.structuredContent).toMatchObject({
+          code: "not_found",
+          expected: true,
+          message: "Note not found: missing.md",
+        });
+        expect(JSON.stringify(result)).not.toContain(vaultPath);
+      });
+    });
+  });
 });
+
+type RegisteredMcpServer = {
+  _registeredTools: Record<
+    string,
+    {
+      handler: (
+        input: Record<string, unknown>,
+        extra: unknown,
+      ) => Promise<CallToolResult>;
+    }
+  >;
+};
+
+async function callRegisteredTool(
+  server: unknown,
+  name: string,
+  input: Record<string, unknown>,
+): Promise<CallToolResult> {
+  const registeredServer = server as RegisteredMcpServer;
+  return registeredServer._registeredTools[name].handler(input, {});
+}
+
+function readToolJson(result: CallToolResult): Record<string, unknown> {
+  const [content] = result.content ?? [];
+  if (content?.type !== "text") {
+    throw new Error("Expected a text MCP tool result");
+  }
+
+  return JSON.parse(content.text) as Record<string, unknown>;
+}
 
 function createRefreshResult(indexed: number): RefreshSearchIndexResult {
   return {
