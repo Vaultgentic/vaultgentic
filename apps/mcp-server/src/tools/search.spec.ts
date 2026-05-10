@@ -36,6 +36,23 @@ describe("GIVEN the MCP search tool", () => {
         expect(response.results[0]).not.toHaveProperty("score");
       });
 
+      it("SHOULD mark cached index summaries", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createCachedRefreshResult(),
+          search: async () => [createSearchResult(0.5)],
+        });
+
+        const response = await search({ query: "alpha" });
+
+        expect(response.refresh).toEqual({
+          indexed: 0,
+          skipped: 0,
+          deleted: 0,
+          cached: true,
+        });
+      });
+
       it("SHOULD include scores when requested", async () => {
         const search = createSearchToolHandler({
           config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
@@ -286,6 +303,15 @@ function createRefreshResult(indexed: number): RefreshSearchIndexResult {
       },
     },
   };
+}
+
+function createCachedRefreshResult(): RefreshSearchIndexResult {
+  const result = createRefreshResult(0) as RefreshSearchIndexResult & {
+    sync: RefreshSearchIndexResult["sync"] & { cached: true };
+  };
+  result.sync.cached = true;
+
+  return result;
 }
 
 async function createSearchFixture(name: string) {

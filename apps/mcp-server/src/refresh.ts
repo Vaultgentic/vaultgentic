@@ -8,7 +8,16 @@ import type {
 } from "@vaultgentic/core";
 
 export type McpIndexRefreshCoordinator = {
-  ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
+  ensureIndexFresh: () => Promise<McpRefreshSearchIndexResult>;
+};
+
+export type McpRefreshSearchIndexResult = Omit<
+  RefreshSearchIndexResult,
+  "sync"
+> & {
+  sync: RefreshSearchIndexResult["sync"] & {
+    cached?: true;
+  };
 };
 
 export type CreateMcpIndexRefreshCoordinatorOptions = {
@@ -46,6 +55,7 @@ export function createMcpIndexRefreshCoordinator(
             indexed: 0,
             skipped: 0,
             deleted: 0,
+            cached: true,
             files: [],
             deletedPaths: [],
           },

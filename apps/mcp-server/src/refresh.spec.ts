@@ -1,9 +1,9 @@
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { RefreshSearchIndexResult } from "@vaultgentic/core";
 import { describe, expect, it } from "vitest";
 import { createMcpIndexRefreshCoordinator } from "./refresh.js";
-import type { RefreshSearchIndexResult } from "@vaultgentic/core";
 
 describe("GIVEN an MCP index refresh coordinator", () => {
   describe("WHEN callers request a fresh index", () => {
@@ -54,6 +54,7 @@ describe("GIVEN an MCP index refresh coordinator", () => {
         expect(refreshCount).toBe(1);
         expect(first.sync.indexed).toBe(1);
         expect(second.sync.indexed).toBe(0);
+        expect(second.sync).toMatchObject({ cached: true });
       });
     });
   });

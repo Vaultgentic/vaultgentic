@@ -23,7 +23,9 @@ export type McpToolError = Error & {
 export type CompactRefreshSummary = Pick<
   RefreshSearchIndexResult["sync"],
   "indexed" | "skipped" | "deleted"
->;
+> & {
+  cached?: true;
+};
 
 export type CompactIndexStatus = Pick<
   DatabaseStatus,
@@ -57,7 +59,14 @@ export function compactRefreshSummary(
     indexed: sync.indexed,
     skipped: sync.skipped,
     deleted: sync.deleted,
+    ...(isCachedRefreshSync(sync) ? { cached: true } : {}),
   };
+}
+
+function isCachedRefreshSync(
+  sync: RefreshSearchIndexResult["sync"],
+): sync is RefreshSearchIndexResult["sync"] & { cached: true } {
+  return "cached" in sync && sync.cached === true;
 }
 
 export function compactIndexStatus(status: DatabaseStatus): CompactIndexStatus {
