@@ -15,6 +15,7 @@ export {
   configFileName,
   ConfigServiceError,
   defaultIgnoredPaths,
+  defaultSearchLimit,
   getDefaultConfigPath,
   loadConfig,
   resolveVaultPath,

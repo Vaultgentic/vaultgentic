@@ -477,6 +477,104 @@ describe("GIVEN the search command", () => {
     });
   });
 
+  describe("WHEN config sets a default search limit", () => {
+    describe("THEN search uses the configured limit without a command override", () => {
+      it("SHOULD return only the configured number of results", async () => {
+        const { configPath, vaultPath } = await createSearchFixture(
+          "configured-limit",
+          { searchLimit: 1 },
+        );
+        await writeFile(
+          path.join(vaultPath, "gamma.md"),
+          "# Gamma\n\nAnother sqlite-vec searchable note.",
+        );
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "sqlite-vec",
+              "--mode",
+              "keyword",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(JSON.parse(output)).toHaveLength(1);
+      });
+    });
+  });
+
+  describe("WHEN command search limit overrides config", () => {
+    describe("THEN the explicit command limit is used", () => {
+      it("SHOULD return the command-line number of results", async () => {
+        const { configPath, vaultPath } = await createSearchFixture(
+          "override-limit",
+          { searchLimit: 1 },
+        );
+        await writeFile(
+          path.join(vaultPath, "gamma.md"),
+          "# Gamma\n\nAnother sqlite-vec searchable note.",
+        );
+        await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "index",
+              "sync",
+              "--config",
+              configPath,
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        const output = await captureConsoleLog(async () => {
+          await createProgram().parseAsync(
+            [
+              "node",
+              "vaultgentic",
+              "search",
+              "sqlite-vec",
+              "--mode",
+              "keyword",
+              "--config",
+              configPath,
+              "--limit",
+              "2",
+              "--json",
+            ],
+            { from: "node" },
+          );
+        });
+
+        expect(JSON.parse(output)).toHaveLength(2);
+      });
+    });
+  });
+
   describe("WHEN title mode prints JSON output", () => {
     describe("THEN known-note matches include title metadata", () => {
       it("SHOULD search titles, aliases, and paths with limit support", async () => {
@@ -1136,7 +1234,10 @@ describe("GIVEN the CLI error runner", () => {
   });
 });
 
-async function createSearchFixture(name: string): Promise<{
+async function createSearchFixture(
+  name: string,
+  options: { searchLimit?: number } = {},
+): Promise<{
   configPath: string;
   databasePath: string;
   vaultPath: string;
@@ -1153,7 +1254,16 @@ async function createSearchFixture(name: string): Promise<{
     "---\ntitle: Alpha\n---\n\n# Alpha\n\n## Details\n\nThe sqlite-vec extension is searchable.",
   );
   await writeFile(path.join(vaultPath, "beta.md"), "# Beta\n\nOther content.");
-  await writeFile(configPath, JSON.stringify({ vaultPath, databasePath }));
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      vaultPath,
+      databasePath,
+      ...(options.searchLimit === undefined
+        ? {}
+        : { searchLimit: options.searchLimit }),
+    }),
+  );
 
   return { configPath, databasePath, vaultPath };
 }

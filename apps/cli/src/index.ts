@@ -77,7 +77,8 @@ type CreateProgramOptions = {
   progressStream?: Pick<NodeJS.WriteStream, "isTTY" | "write">;
 };
 
-const defaultSearchLimit = 10;
+type CliConfig = Awaited<ReturnType<typeof loadConfig>>;
+
 const hybridBm25Limit = 40;
 const hybridSemanticLimit = 40;
 const hybridTitleLimit = 10;
@@ -256,7 +257,7 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         const config = await loadConfig({ configPath: options.config });
         const output = await search(config, {
           query,
-          limit: options.limit,
+          limit: options.limit ?? config.searchLimit,
           mode: options.mode,
         });
 
@@ -464,7 +465,7 @@ function toTitleSearchOutput(result: TitleSearchResult): TitleSearchOutput {
 }
 
 async function search(
-  config: Parameters<typeof searchBm25>[0],
+  config: CliConfig,
   options: { query: string; limit?: number; mode: SearchMode },
 ): Promise<SearchOutput[]> {
   if (options.mode === "hybrid") {
@@ -483,10 +484,10 @@ async function search(
 }
 
 async function searchHybrid(
-  config: Parameters<typeof searchBm25>[0],
+  config: CliConfig,
   options: { query: string; limit?: number },
 ): Promise<HybridSearchOutput[]> {
-  const finalLimit = options.limit ?? defaultSearchLimit;
+  const finalLimit = options.limit ?? config.searchLimit;
   const keywordLimit = Math.max(hybridBm25Limit, finalLimit);
   const vectorLimit = Math.max(hybridSemanticLimit, finalLimit);
   const titleLimit = Math.max(hybridTitleLimit, finalLimit);

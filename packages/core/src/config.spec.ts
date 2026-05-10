@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   ConfigServiceError,
   defaultIgnoredPaths,
+  defaultSearchLimit,
   getDefaultConfigPath,
   loadConfig,
   resolveVaultRelativePath,
@@ -30,6 +31,24 @@ describe("GIVEN Vaultgentic config loading", () => {
           vaultPath: path.join(cwd, "vault"),
           databasePath: path.join(cwd, ".vaultgentic/index.sqlite"),
           ignoredPaths: [...defaultIgnoredPaths, "archive"],
+          searchLimit: defaultSearchLimit,
+        });
+      });
+
+      it("SHOULD return a configured search limit", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-config-"));
+        const configPath = path.join(cwd, "custom-config.json");
+        await writeFile(
+          configPath,
+          JSON.stringify({
+            vaultPath: "vault",
+            databasePath: ".vaultgentic/index.sqlite",
+            searchLimit: 3,
+          }),
+        );
+
+        await expect(loadConfig({ configPath, cwd })).resolves.toMatchObject({
+          searchLimit: 3,
         });
       });
     });
@@ -204,6 +223,31 @@ describe("GIVEN Vaultgentic config loading", () => {
           loadConfig({ configPath: "config.json", cwd }),
         ).rejects.toThrow("databasePath");
       });
+    });
+  });
+
+  describe("WHEN search limit config is invalid", () => {
+    describe("THEN clear validation errors are thrown", () => {
+      it.each([1.5, 0, -1, 101])(
+        "SHOULD reject %s as a search limit",
+        async (searchLimit) => {
+          const cwd = await mkdtemp(
+            path.join(tmpdir(), "vaultgentic-invalid-search-limit-"),
+          );
+          await writeFile(
+            path.join(cwd, "config.json"),
+            JSON.stringify({
+              vaultPath: "vault",
+              databasePath: "db.sqlite",
+              searchLimit,
+            }),
+          );
+
+          await expect(
+            loadConfig({ configPath: "config.json", cwd }),
+          ).rejects.toThrow("searchLimit");
+        },
+      );
     });
   });
 });

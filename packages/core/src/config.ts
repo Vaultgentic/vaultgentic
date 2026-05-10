@@ -12,6 +12,8 @@ export const defaultIgnoredPaths = [
   ".vaultgentic",
 ];
 
+export const defaultSearchLimit = 5;
+
 export const configDirectoryName = "vaultgentic";
 export const configFileName = "config.json";
 
@@ -26,6 +28,7 @@ const configSchema = z.object({
   vaultPath: z.string().trim().min(1),
   databasePath: z.string().trim().min(1),
   ignoredPaths: z.array(z.string()).optional(),
+  searchLimit: z.number().int().min(1).max(100).optional(),
 });
 
 export async function loadConfig(
@@ -34,6 +37,7 @@ export async function loadConfig(
   vaultPath: string;
   databasePath: string;
   ignoredPaths: string[];
+  searchLimit: number;
 }> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = resolveConfigPath(options.configPath, cwd);
@@ -74,7 +78,12 @@ export async function loadConfig(
     parsedConfig.ignoredPaths ?? [],
   );
 
-  return { vaultPath, databasePath, ignoredPaths };
+  return {
+    vaultPath,
+    databasePath,
+    ignoredPaths,
+    searchLimit: parsedConfig.searchLimit ?? defaultSearchLimit,
+  };
 }
 
 export function resolveVaultPath(
