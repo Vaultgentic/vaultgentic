@@ -3,9 +3,9 @@ import { open, realpath, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { ConfigServiceError, resolveVaultRelativePath } from "./config.js";
+import type { SearchDatabaseConfig } from "./database.js";
 import { VaultgenticError } from "./errors.js";
 import { openSearchDatabase } from "./indexer.js";
-import type { SearchDatabaseConfig } from "./database.js";
 
 export type ReadVaultTargetOptions = {
   target: string;
@@ -198,7 +198,11 @@ async function resolveRealPathInsideVault(
   absolutePath: string,
   target: string,
 ): Promise<string> {
-  const realCandidatePath = await realpath(absolutePath);
+  const realCandidatePath = await realpath(absolutePath).catch(
+    (error: unknown) => {
+      throw toSafeReadError(error, `Note not found: ${target}`);
+    },
+  );
   ensurePathInsideVault(realVaultPath, realCandidatePath, target);
 
   return realCandidatePath;
@@ -208,13 +212,19 @@ async function readRegularFileStat(
   realCandidatePath: string,
   target: string,
 ): Promise<Awaited<ReturnType<typeof stat>>> {
-  const pathStat = await stat(realCandidatePath);
+  const pathStat = await stat(realCandidatePath).catch((error: unknown) => {
+    throw toSafeReadError(error, `Could not inspect note: ${target}`);
+  });
 
   if (!pathStat.isFile()) {
     throw new VaultReadError(`Path must be a regular markdown file: ${target}`);
   }
 
   return pathStat;
+}
+
+function toSafeReadError(error: unknown, message: string): VaultReadError {
+  return new VaultReadError(message, { cause: error });
 }
 
 async function ensureOpenHandleInsideVault(

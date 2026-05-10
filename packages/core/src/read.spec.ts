@@ -1,11 +1,11 @@
-import Database from "better-sqlite3";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
 import { initializeSearchDatabase } from "./database.js";
 import { indexVaultFile } from "./indexer.js";
-import { readVaultTarget, VaultReadError } from "./read.js";
+import { VaultReadError, readVaultTarget } from "./read.js";
 
 vi.mock("./embedding.js", async (importOriginal) => {
   const original = await importOriginal<typeof import("./embedding.js")>();
@@ -184,6 +184,17 @@ describe("GIVEN a vault read service", () => {
         await expect(
           readVaultTarget(config, { target: "missing.md" }),
         ).rejects.toBeInstanceOf(VaultReadError);
+      });
+
+      it("SHOULD NOT leak absolute local paths", async () => {
+        const config = await createFixture("missing-note-path");
+
+        await expect(
+          readVaultTarget(config, { target: "missing.md" }),
+        ).rejects.toThrow("Note not found: missing.md");
+        await expect(
+          readVaultTarget(config, { target: "missing.md" }),
+        ).rejects.not.toThrow(config.vaultPath);
       });
     });
   });
