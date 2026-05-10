@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { openSearchDatabase } from "@vaultgentic/core";
+import { describe, expect, it } from "vitest";
 import {
   createProgram,
   isMainModule,
@@ -1070,7 +1070,7 @@ describe("GIVEN the read command", () => {
 
         expect(JSON.parse(output)).toMatchObject({
           type: "note",
-          content: "---\nt",
+          content: "---…",
           truncated: true,
         });
       });
