@@ -7,6 +7,7 @@ import { initializeSearchDatabase, loadSqliteVec } from "./database.js";
 import { embedChunkText } from "./embedding.js";
 import {
   indexVaultFile,
+  refreshSearchIndex,
   rebuildSearchIndex,
   searchBm25,
   SearchIndexerError,
@@ -188,6 +189,41 @@ describe("GIVEN a BM25 search index", () => {
           fts: 0,
           vectors: 0,
         });
+      });
+    });
+  });
+
+  describe("WHEN the search index is refreshed", () => {
+    describe("THEN sync results and database status reflect vault changes", () => {
+      it("SHOULD index new files, update changed files, and delete stale files", async () => {
+        const config = await createFixture("refresh-index");
+        const alphaPath = path.join(config.vaultPath, "alpha.md");
+        const stalePath = path.join(config.vaultPath, "stale.md");
+        await writeFile(alphaPath, "# Alpha\n\nfirst keyword");
+        await writeFile(stalePath, "# Stale\n\ndelete keyword");
+        await syncSearchIndex(config);
+        await writeFile(alphaPath, "# Alpha\n\nsecond keyword");
+        await rm(stalePath);
+        await writeFile(
+          path.join(config.vaultPath, "beta.md"),
+          "# Beta\n\nnew note",
+        );
+
+        const result = await refreshSearchIndex(config);
+
+        expect(result.sync).toMatchObject({
+          indexed: 2,
+          skipped: 0,
+          deleted: 1,
+          deletedPaths: ["stale.md"],
+        });
+        expect(result.status).toMatchObject({
+          noteCount: 2,
+          chunkCount: 2,
+          lastIndexedAt: expect.any(Number),
+        });
+        expect(searchBm25(config, { query: "first" })).toEqual([]);
+        expect(searchBm25(config, { query: "second" })).toHaveLength(1);
       });
     });
   });

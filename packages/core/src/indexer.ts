@@ -41,6 +41,11 @@ export type SyncSearchIndexResult = {
   deletedPaths: string[];
 };
 
+export type RefreshSearchIndexResult = {
+  sync: SyncSearchIndexResult;
+  status: DatabaseStatus;
+};
+
 export type RebuildSearchIndexResult = {
   indexed: number;
   skipped: 0;
@@ -343,6 +348,16 @@ export async function syncSearchIndex(
   } finally {
     database?.close();
   }
+}
+
+export async function refreshSearchIndex(
+  config: SearchDatabaseConfig,
+  options: IndexProgressOptions = {},
+): Promise<RefreshSearchIndexResult> {
+  const sync = await syncSearchIndex(config, options);
+  const status = initializeSearchDatabase(config);
+
+  return { sync, status };
 }
 
 export async function rebuildSearchIndex(

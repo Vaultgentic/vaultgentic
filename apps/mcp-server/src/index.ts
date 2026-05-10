@@ -2,8 +2,11 @@
 import {
   initializeSearchDatabase,
   loadConfig,
+  refreshSearchIndex,
   vaultgenticCoreName,
   type DatabaseStatus,
+  type RefreshSearchIndexResult,
+  type SearchDatabaseConfig,
 } from "@vaultgentic/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -17,13 +20,32 @@ type McpServerConfig = Awaited<ReturnType<typeof loadConfig>>;
 type VaultgenticMcpServer = {
   config: McpServerConfig;
   databaseStatus: DatabaseStatus;
+  ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
   server: McpServer;
   toolNames: string[];
 };
 
 type CreateVaultgenticMcpServerOptions = {
   configPath?: string;
+  refreshIndex?: (
+    config: SearchDatabaseConfig,
+  ) => Promise<RefreshSearchIndexResult>;
+  refreshThrottleMs?: number;
 };
+
+type McpIndexRefreshCoordinator = {
+  ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
+};
+
+type CreateMcpIndexRefreshCoordinatorOptions = {
+  now?: () => number;
+  refreshIndex?: (
+    config: SearchDatabaseConfig,
+  ) => Promise<RefreshSearchIndexResult>;
+  throttleMs?: number;
+};
+
+const defaultRefreshThrottleMs = 5_000;
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version: string };
@@ -51,6 +73,50 @@ export const forbiddenMcpToolNameParts = [
 export const sharedCorePackageName = vaultgenticCoreName;
 export const packageVersion = packageJson.version;
 
+export function createMcpIndexRefreshCoordinator(
+  config: SearchDatabaseConfig,
+  options: CreateMcpIndexRefreshCoordinatorOptions = {},
+): McpIndexRefreshCoordinator {
+  const now = options.now ?? Date.now;
+  const refreshIndex = options.refreshIndex ?? refreshSearchIndex;
+  const throttleMs = options.throttleMs ?? defaultRefreshThrottleMs;
+  let inFlightRefresh: Promise<RefreshSearchIndexResult> | undefined;
+  let lastRefreshFinishedAt = 0;
+
+  return {
+    async ensureIndexFresh() {
+      if (inFlightRefresh !== undefined) {
+        return inFlightRefresh;
+      }
+
+      if (
+        lastRefreshFinishedAt > 0 &&
+        now() - lastRefreshFinishedAt < throttleMs
+      ) {
+        return {
+          sync: {
+            indexed: 0,
+            skipped: 0,
+            deleted: 0,
+            files: [],
+            deletedPaths: [],
+          },
+          status: initializeSearchDatabase(config),
+        };
+      }
+
+      inFlightRefresh = refreshIndex(config);
+      try {
+        const result = await inFlightRefresh;
+        lastRefreshFinishedAt = now();
+        return result;
+      } finally {
+        inFlightRefresh = undefined;
+      }
+    },
+  };
+}
+
 export function isMainModule(
   moduleUrl: string,
   argvPath: string | undefined,
@@ -66,7 +132,12 @@ export async function createVaultgenticMcpServer(
   options: CreateVaultgenticMcpServerOptions = {},
 ): Promise<VaultgenticMcpServer> {
   const config = await loadConfig({ configPath: options.configPath });
-  const databaseStatus = initializeSearchDatabase(config);
+  initializeSearchDatabase(config);
+  const refreshCoordinator = createMcpIndexRefreshCoordinator(config, {
+    refreshIndex: options.refreshIndex,
+    throttleMs: options.refreshThrottleMs,
+  });
+  const refreshResult = await refreshCoordinator.ensureIndexFresh();
   const server = new McpServer({
     name: mcpServerPackageName,
     version: packageVersion,
@@ -74,7 +145,8 @@ export async function createVaultgenticMcpServer(
 
   return {
     config,
-    databaseStatus,
+    databaseStatus: refreshResult.status,
+    ensureIndexFresh: refreshCoordinator.ensureIndexFresh,
     server,
     toolNames: [],
   };
@@ -94,7 +166,7 @@ export async function runMcpServerMain(
   } = {},
 ): Promise<void> {
   try {
-    await startVaultgenticMcpServer({ configPath: options.configPath });
+    await startVaultgenticMcpServer(options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const errorStream = options.errorStream ?? process.stderr;

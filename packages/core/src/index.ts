@@ -41,6 +41,7 @@ export {
 export {
   indexVaultFile,
   openSearchDatabase,
+  refreshSearchIndex,
   rebuildSearchIndex,
   searchBm25,
   SearchIndexerError,
@@ -53,6 +54,7 @@ export {
   type IndexProgressOptions,
   type IndexProgressPhase,
   type RebuildSearchIndexResult,
+  type RefreshSearchIndexResult,
   type SemanticSearchResult,
   type SyncSearchIndexResult,
   type TitleSearchResult,
