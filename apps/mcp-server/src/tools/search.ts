@@ -30,10 +30,17 @@ export type CompactSearchResult = {
   >["componentScores"];
 };
 
+export type SearchScoreMetadata = {
+  kind: "relevance";
+  higherIsBetter: true;
+  description: string;
+};
+
 export type SearchToolResponse = {
   query: string;
   mode: SearchMode;
   results: CompactSearchResult[];
+  scoreMetadata?: SearchScoreMetadata;
   indexStatus: CompactIndexStatus;
   refresh: CompactRefreshSummary;
 };
@@ -70,6 +77,9 @@ export function createSearchToolHandler(options: {
         results: results.map((result) =>
           compactSearchResult(result, parsedInput),
         ),
+        ...(parsedInput.includeScores === true
+          ? { scoreMetadata: searchScoreMetadata }
+          : {}),
         indexStatus: compactIndexStatus(refreshResult.status),
         refresh: compactRefreshSummary(refreshResult.sync),
       };
@@ -91,9 +101,50 @@ function compactSearchResult(
     matchedBy: result.matchedBy,
     ...("headingPath" in result ? { headingPath: result.headingPath } : {}),
     ...("snippet" in result ? { snippet: result.snippet } : {}),
-    ...(input.includeScores === true ? { score: result.score } : {}),
+    ...(input.includeScores === true ? { score: toDisplayScore(result) } : {}),
     ...(input.includeScores === true && "componentScores" in result
-      ? { componentScores: result.componentScores }
+      ? { componentScores: toDisplayComponentScores(result.componentScores) }
       : {}),
   };
+}
+
+const searchScoreMetadata: SearchScoreMetadata = {
+  kind: "relevance",
+  higherIsBetter: true,
+  description:
+    "Scores are normalized for MCP responses so higher values indicate better relevance. Keyword BM25 scores are reported as positive relevance, semantic distances are converted to similarity, title scores use title-match relevance, and hybrid scores use weighted reciprocal-rank fusion.",
+};
+
+function toDisplayScore(result: SearchOutput): number {
+  if ("componentScores" in result) return result.score;
+
+  const [matchedBy] = result.matchedBy;
+  if (matchedBy === "keyword") return Math.abs(result.score);
+  if (matchedBy === "vector") return toSimilarityScore(result.score);
+  return result.score;
+}
+
+function toDisplayComponentScores(
+  componentScores: Extract<
+    SearchOutput,
+    { componentScores: unknown }
+  >["componentScores"],
+): Extract<SearchOutput, { componentScores: unknown }>["componentScores"] {
+  return Object.fromEntries(
+    Object.entries(componentScores).map(([componentName, componentScore]) => [
+      componentName,
+      {
+        ...componentScore,
+        score:
+          componentName === "vector"
+            ? toSimilarityScore(componentScore.score)
+            : Math.abs(componentScore.score),
+      },
+    ]),
+  );
+}
+
+function toSimilarityScore(distance: number): number {
+  if (!Number.isFinite(distance)) return distance;
+  return 1 / (1 + Math.max(0, distance));
 }

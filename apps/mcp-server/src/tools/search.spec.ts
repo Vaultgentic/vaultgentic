@@ -1,7 +1,7 @@
+import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
 import { describe, expect, it } from "vitest";
 import { createSearchToolHandler, searchToolInputSchema } from "./search.js";
 import { toMcpToolError } from "./shared.js";
-import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
 
 describe("GIVEN the MCP search tool", () => {
   describe("WHEN searching the vault", () => {
@@ -32,12 +32,55 @@ describe("GIVEN the MCP search tool", () => {
         const search = createSearchToolHandler({
           config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
           ensureIndexFresh: async () => createRefreshResult(1),
-          search: async () => [createSearchResult(0.5)],
+          search: async () => [createSearchResult(-0.5)],
         });
 
         const response = await search({ query: "alpha", includeScores: true });
 
         expect(response.results[0]).toMatchObject({ score: 0.5 });
+        expect(response.scoreMetadata).toMatchObject({
+          kind: "relevance",
+          higherIsBetter: true,
+        });
+      });
+
+      it("SHOULD normalize hybrid component scores when requested", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => [createHybridSearchResult()],
+        });
+
+        const response = await search({ query: "alpha", includeScores: true });
+
+        expect(response.results[0]).toMatchObject({
+          score: 0.032,
+          componentScores: {
+            keyword: { rank: 1, score: 12 },
+            vector: { rank: 2, score: 0.8 },
+            title: { rank: 3, score: 4 },
+          },
+        });
+      });
+
+      it("SHOULD normalize semantic distance scores when requested", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => [createSemanticSearchResult()],
+        });
+
+        const response = await search({
+          query: "alpha",
+          mode: "semantic",
+          includeScores: true,
+        });
+
+        expect(response.results[0]).toMatchObject({ score: 0.8 });
+        expect(response.scoreMetadata).toMatchObject({
+          kind: "relevance",
+          higherIsBetter: true,
+        });
       });
 
       it("SHOULD reject oversized search inputs", () => {
@@ -152,5 +195,38 @@ function createSearchResult(score: number): SearchOutput {
     rank: 1,
     chunkIndex: 0,
     matchedBy: ["keyword"],
+  };
+}
+
+function createHybridSearchResult(): SearchOutput {
+  return {
+    chunkId: 7,
+    path: "alpha.md",
+    title: "Alpha",
+    headingPath: ["Alpha"],
+    snippet: "A compact match",
+    score: 0.032,
+    rank: 1,
+    chunkIndex: 0,
+    matchedBy: ["keyword", "vector", "title"],
+    componentScores: {
+      keyword: { rank: 1, score: -12 },
+      vector: { rank: 2, score: 0.25 },
+      title: { rank: 3, score: 4 },
+    },
+  };
+}
+
+function createSemanticSearchResult(): SearchOutput {
+  return {
+    chunkId: 7,
+    path: "alpha.md",
+    title: "Alpha",
+    headingPath: ["Alpha"],
+    snippet: "A compact match",
+    score: 0.25,
+    rank: 1,
+    chunkIndex: 0,
+    matchedBy: ["vector"],
   };
 }
