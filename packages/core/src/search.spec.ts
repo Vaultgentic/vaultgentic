@@ -7,6 +7,28 @@ import { refreshSearchIndex } from "./indexer.js";
 import { searchVault } from "./search.js";
 
 describe("GIVEN shared vault search", () => {
+  describe("WHEN keyword queries include natural-language context", () => {
+    describe("THEN fallback matching still returns indexed notes", () => {
+      it("SHOULD find notes by distinctive terms", async () => {
+        const config = await createSearchFixture("search-natural-query");
+        await writeNote(
+          config.vaultPath,
+          "alpha.md",
+          "# Alpha\n\nOpenCode should find this unique needle.",
+        );
+        initializeSearchDatabase(config);
+        await refreshSearchIndex(config);
+
+        const results = await searchVault(config, {
+          query: "Can OpenCode find the unique needle?",
+          mode: "keyword",
+        });
+
+        expect(results.map((result) => result.path)).toContain("alpha.md");
+      });
+    });
+  });
+
   describe("WHEN filtering by scope and tags", () => {
     describe("THEN results are restricted before returning to callers", () => {
       it("SHOULD return only matching scoped notes with requested tags", async () => {

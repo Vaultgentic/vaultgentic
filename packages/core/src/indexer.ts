@@ -1,31 +1,31 @@
-import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { ConfigServiceError, resolveVaultRelativePath } from "./config.js";
 import {
-  chunkMarkdownNote,
-  parseMarkdownNote,
-  type MarkdownChunk,
-  type ParsedMarkdownNote,
-} from "./markdown.js";
-import { scanVaultFiles, type VaultFileMetadata } from "./scanner.js";
-import {
+  type DatabaseStatus,
+  type SearchDatabaseConfig,
   chunkerVersion,
   initializeSearchDatabase,
   loadSqliteVec,
   resetEmbeddingStorage,
   schemaVersion,
-  type DatabaseStatus,
-  type SearchDatabaseConfig,
 } from "./database.js";
 import {
   embedChunkText,
   embedQueryText,
   embeddingModelMetadata,
 } from "./embedding.js";
-import { VaultgenticError } from "./errors.js";
 import type { EmbeddingResult } from "./embedding.js";
+import { VaultgenticError } from "./errors.js";
+import {
+  type MarkdownChunk,
+  type ParsedMarkdownNote,
+  chunkMarkdownNote,
+  parseMarkdownNote,
+} from "./markdown.js";
+import { type VaultFileMetadata, scanVaultFiles } from "./scanner.js";
 
 export type IndexFileResult = {
   path: string;
@@ -477,34 +477,19 @@ export function searchBm25(
     }
 
     const filters = buildSearchFilterSql("n", options);
-    const rows = database
-      .prepare(
-        `
-          SELECT
-            c.id AS chunkId,
-            c.path,
-            c.title,
-            c.heading_path AS headingPath,
-            c.chunk_index AS chunkIndex,
-            c.start_line AS startLine,
-            c.end_line AS endLine,
-            snippet(chunks_fts, 3, '', '', '…', 32) AS snippet,
-            bm25(chunks_fts) AS score
-          FROM chunks_fts
-          JOIN chunks c ON c.id = chunks_fts.rowid
-          JOIN notes n ON n.path = c.path
-          WHERE chunks_fts MATCH ?${filters.sql}
-          ORDER BY score ASC
-          LIMIT ?
-        `,
-      )
-      .all(
-        ftsQuery,
-        ...filters.params,
-        normalizeSearchLimit(options.limit),
-      ) as SearchRow[];
+    const finalLimit = normalizeSearchLimit(options.limit);
+    const rows = executeBm25Search(database, ftsQuery, filters, finalLimit);
+    const fallbackRows =
+      rows.length === 0
+        ? executeBm25Search(
+            database,
+            buildRelaxedFtsQuery(query),
+            filters,
+            finalLimit,
+          )
+        : rows;
 
-    return rows.map((row, index) => ({
+    return fallbackRows.map((row, index) => ({
       path: row.path,
       chunkId: row.chunkId,
       title: row.title,
@@ -521,6 +506,38 @@ export function searchBm25(
   } finally {
     database?.close();
   }
+}
+
+function executeBm25Search(
+  database: Database.Database,
+  ftsQuery: string,
+  filters: { sql: string; params: string[] },
+  limit: number,
+): SearchRow[] {
+  if (ftsQuery === "") return [];
+
+  return database
+    .prepare(
+      `
+        SELECT
+          c.id AS chunkId,
+          c.path,
+          c.title,
+          c.heading_path AS headingPath,
+          c.chunk_index AS chunkIndex,
+          c.start_line AS startLine,
+          c.end_line AS endLine,
+          snippet(chunks_fts, 3, '', '', '…', 32) AS snippet,
+          bm25(chunks_fts) AS score
+        FROM chunks_fts
+        JOIN chunks c ON c.id = chunks_fts.rowid
+        JOIN notes n ON n.path = c.path
+        WHERE chunks_fts MATCH ?${filters.sql}
+        ORDER BY score ASC
+        LIMIT ?
+      `,
+    )
+    .all(ftsQuery, ...filters.params, limit) as SearchRow[];
 }
 
 export async function searchSemantic(
@@ -1349,6 +1366,17 @@ function buildFtsQuery(query: string): string {
     .filter((term) => term !== "")
     .map((term) => `"${term.replaceAll('"', '""')}"`)
     .join(" ");
+}
+
+function buildRelaxedFtsQuery(query: string): string {
+  return query
+    .split(/\s+/u)
+    .map((term) =>
+      term.trim().replace(/^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu, ""),
+    )
+    .filter((term) => term.length > 2)
+    .map((term) => `"${term.replaceAll('"', '""')}"`)
+    .join(" OR ");
 }
 
 function buildTitleFtsQuery(query: string): string {

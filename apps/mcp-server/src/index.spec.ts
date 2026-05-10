@@ -1,6 +1,8 @@
 import { mkdir, mkdtemp, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
 import type {
@@ -9,6 +11,7 @@ import type {
 } from "@vaultgentic/core";
 import { VaultReadError } from "@vaultgentic/core";
 import { describe, expect, it } from "vitest";
+import { searchVault as searchVaultFromSource } from "../../../packages/core/src/search.js";
 import {
   createMcpIndexRefreshCoordinator,
   createVaultgenticMcpServer,
@@ -522,6 +525,48 @@ describe("GIVEN the MCP server skeleton", () => {
           results: [{ path: "notes/search.md", snippet: "A compact match" }],
         });
         expect(result.isError).toBeUndefined();
+      });
+
+      it("SHOULD return known search hits through the MCP client path", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          path.join(vaultPath, "alpha.md"),
+          "# Alpha\n\nOpenCode should find this unique needle.",
+        );
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshThrottleMs: 0,
+          search: searchVaultFromSource,
+        });
+        const client = new Client({ name: "opencode", version: "test" });
+        const [clientTransport, serverTransport] =
+          InMemoryTransport.createLinkedPair();
+        await mcpServer.server.connect(serverTransport);
+        await client.connect(clientTransport);
+
+        try {
+          const result = await client.callTool({
+            name: "vaultgentic_search",
+            arguments: {
+              query: "Can OpenCode find the unique needle?",
+              mode: "keyword",
+            },
+          });
+
+          expect(readToolJson(result)).toMatchObject({
+            results: [{ path: "alpha.md" }],
+          });
+        } finally {
+          await client.close();
+        }
       });
 
       it("SHOULD return read content through vaultgentic_read", async () => {
