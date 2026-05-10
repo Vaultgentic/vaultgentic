@@ -91,6 +91,66 @@ describe("GIVEN the MCP search tool", () => {
         });
       });
 
+      it("SHOULD warn when semantic matches have low confidence", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => [createSemanticSearchResult(1.5)],
+        });
+
+        const response = await search({
+          query: "asdf qwer zxcv",
+          mode: "semantic",
+        });
+
+        expect(response.confidenceWarnings).toEqual([
+          "Semantic matches are low confidence; top similarity 0.40 is below 0.50. Verify results before treating them as authoritative.",
+        ]);
+      });
+
+      it("SHOULD warn when hybrid matches only have weak vector support", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => [createVectorOnlyHybridSearchResult()],
+        });
+
+        const response = await search({ query: "asdf qwer zxcv" });
+
+        expect(response.confidenceWarnings).toEqual([
+          "Semantic matches are low confidence; top similarity 0.40 is below 0.50. Verify results before treating them as authoritative.",
+        ]);
+      });
+
+      it("SHOULD warn when the top hybrid match has weak vector-only support", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(2),
+          search: async () => [
+            createVectorOnlyHybridSearchResult(),
+            createHybridSearchResult(),
+          ],
+        });
+
+        const response = await search({ query: "asdf qwer zxcv" });
+
+        expect(response.confidenceWarnings).toEqual([
+          "Semantic matches are low confidence; top similarity 0.40 is below 0.50. Verify results before treating them as authoritative.",
+        ]);
+      });
+
+      it("SHOULD NOT warn when hybrid matches have lexical support", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => [createHybridSearchResult()],
+        });
+
+        const response = await search({ query: "alpha" });
+
+        expect(response.confidenceWarnings).toBeUndefined();
+      });
+
       it("SHOULD include diagnostics when filters produce empty results", async () => {
         const config = await createSearchFixture("mcp-filter-diagnostics");
         await writeNote(
@@ -283,16 +343,33 @@ function createHybridSearchResult(): SearchOutput {
   };
 }
 
-function createSemanticSearchResult(): SearchOutput {
+function createSemanticSearchResult(score = 0.25): SearchOutput {
   return {
     chunkId: 7,
     path: "alpha.md",
     title: "Alpha",
     headingPath: ["Alpha"],
     snippet: "A compact match",
-    score: 0.25,
+    score,
     rank: 1,
     chunkIndex: 0,
     matchedBy: ["vector"],
+  };
+}
+
+function createVectorOnlyHybridSearchResult(): SearchOutput {
+  return {
+    chunkId: 7,
+    path: "alpha.md",
+    title: "Alpha",
+    headingPath: ["Alpha"],
+    snippet: "A compact match",
+    score: 0.016,
+    rank: 1,
+    chunkIndex: 0,
+    matchedBy: ["vector"],
+    componentScores: {
+      vector: { rank: 1, score: 1.5 },
+    },
   };
 }

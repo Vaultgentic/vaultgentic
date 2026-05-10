@@ -42,6 +42,7 @@ export type SearchToolResponse = {
   query: string;
   mode: SearchMode;
   results: CompactSearchResult[];
+  confidenceWarnings?: string[];
   filterDiagnostics?: SearchFilterDiagnostics;
   scoreMetadata?: SearchScoreMetadata;
   indexStatus: CompactIndexStatus;
@@ -83,12 +84,18 @@ export function createSearchToolHandler(options: {
             )
           : undefined;
 
+      const confidenceWarnings = readConfidenceWarnings(
+        parsedInput.mode,
+        results,
+      );
+
       return {
         query: parsedInput.query,
         mode: parsedInput.mode,
         results: results.map((result) =>
           compactSearchResult(result, parsedInput),
         ),
+        ...(confidenceWarnings.length === 0 ? {} : { confidenceWarnings }),
         ...(filterDiagnostics === undefined ? {} : { filterDiagnostics }),
         ...(parsedInput.includeScores === true
           ? { scoreMetadata: searchScoreMetadata }
@@ -134,6 +141,58 @@ const searchScoreMetadata: SearchScoreMetadata = {
   description:
     "Scores are normalized for MCP responses so higher values indicate better relevance. Keyword BM25 scores are reported as positive relevance, semantic distances are converted to similarity, title scores use title-match relevance, and hybrid scores use weighted reciprocal-rank fusion.",
 };
+
+const lowConfidenceSemanticSimilarityThreshold = 0.5;
+
+function readConfidenceWarnings(
+  mode: SearchMode,
+  results: SearchOutput[],
+): string[] {
+  if (mode !== "semantic" && mode !== "hybrid") return [];
+  if (results.length === 0) return [];
+
+  const topSimilarity = readTopSemanticSimilarity(mode, results);
+  if (
+    topSimilarity === undefined ||
+    topSimilarity >= lowConfidenceSemanticSimilarityThreshold
+  ) {
+    return [];
+  }
+
+  return [
+    `Semantic matches are low confidence; top similarity ${topSimilarity.toFixed(2)} is below ${lowConfidenceSemanticSimilarityThreshold.toFixed(2)}. Verify results before treating them as authoritative.`,
+  ];
+}
+
+function readTopSemanticSimilarity(
+  mode: SearchMode,
+  results: SearchOutput[],
+): number | undefined {
+  const [topResult] = results;
+  if (topResult === undefined) return undefined;
+
+  if (mode === "semantic") return readVectorSimilarity(topResult);
+
+  const topResultHasNonVectorMatch = topResult.matchedBy.some(
+    (match) => match !== "vector",
+  );
+  if (topResultHasNonVectorMatch) return undefined;
+
+  return readVectorSimilarity(topResult);
+}
+
+function readVectorSimilarity(result: SearchOutput): number | undefined {
+  if ("componentScores" in result) {
+    const vectorScore = result.componentScores.vector;
+    return vectorScore === undefined
+      ? undefined
+      : toSimilarityScore(vectorScore.score);
+  }
+
+  return result.matchedBy[0] === "vector"
+    ? toSimilarityScore(result.score)
+    : undefined;
+}
 
 function toDisplayScore(result: SearchOutput): number {
   if ("componentScores" in result) return result.score;
