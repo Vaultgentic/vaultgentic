@@ -49,8 +49,18 @@ export type SearchToolResponse = {
   refresh: CompactRefreshSummary;
 };
 
+const searchQuerySchema = z
+  .string()
+  .transform((query) => query.trim())
+  .pipe(
+    z
+      .string()
+      .min(1, { message: "query must contain non-whitespace text" })
+      .max(1_000),
+  );
+
 export const searchToolInputSchema = z.object({
-  query: z.string().trim().min(1).max(1_000),
+  query: searchQuerySchema,
   mode: z.enum(["hybrid", "semantic", "keyword", "title"]).default("hybrid"),
   limit: z.number().int().min(1).max(100).optional(),
   scope: z.string().trim().min(1).max(500).optional(),

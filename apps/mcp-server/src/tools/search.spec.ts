@@ -243,6 +243,24 @@ describe("GIVEN the MCP search tool", () => {
           expected: true,
         });
       });
+
+      it("SHOULD explain whitespace-only query validation errors", async () => {
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async () => [],
+        });
+
+        await expect(search({ query: "   \n\t" })).rejects.toMatchObject({
+          code: "invalid_tool_input",
+          details: {
+            message: expect.stringContaining(
+              "query must contain non-whitespace text",
+            ),
+          },
+          expected: true,
+        });
+      });
     });
   });
 });
