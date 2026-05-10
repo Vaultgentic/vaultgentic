@@ -98,9 +98,73 @@ describe("GIVEN a vault read service", () => {
 
         expect(result).toMatchObject({
           type: "note",
-          content: "abc",
+          content: "ab…",
           truncated: true,
           originalLength: 6,
+        });
+      });
+
+      it("SHOULD end truncated notes on readable boundaries", async () => {
+        const config = await createFixture("truncate-boundary");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "Alpha beta gamma delta",
+        );
+
+        const result = await readVaultTarget(config, {
+          target: "alpha.md",
+          maxChars: 13,
+        });
+
+        expect(result).toMatchObject({
+          type: "note",
+          content: "Alpha beta…",
+          truncated: true,
+          originalLength: 22,
+        });
+      });
+
+      it("SHOULD keep complete words when truncation lands on whitespace", async () => {
+        const config = await createFixture("truncate-whitespace-boundary");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "Alpha beta gamma",
+        );
+
+        const result = await readVaultTarget(config, {
+          target: "alpha.md",
+          maxChars: 12,
+        });
+
+        expect(result).toMatchObject({
+          type: "note",
+          content: "Alpha beta…",
+          truncated: true,
+          originalLength: 16,
+        });
+      });
+
+      it("SHOULD end truncated chunks on readable boundaries", async () => {
+        const config = await createFixture("truncate-chunk-boundary");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Alpha\n\nChunk text should stop cleanly.",
+        );
+        await indexVaultFile(config, "alpha.md");
+        const chunkId = readChunkIdByText(
+          config.databasePath,
+          "Chunk text should stop cleanly.",
+        );
+
+        const result = await readVaultTarget(config, {
+          target: String(chunkId),
+          maxChars: 22,
+        });
+
+        expect(result).toMatchObject({
+          type: "chunk",
+          text: "# Alpha\n\nChunk text…",
+          truncated: true,
         });
       });
     });
@@ -132,6 +196,53 @@ describe("GIVEN a vault read service", () => {
               title: "Custom Alpha",
             },
             links: [expect.objectContaining({ target: "Beta" })],
+          },
+        });
+      });
+
+      it("SHOULD treat note context as metadata for full-note reads", async () => {
+        const config = await createFixture("note-context-alias");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: Context Alpha\ntags:\n  - context\n---\n\n# Alpha",
+        );
+        await indexVaultFile(config, "alpha.md");
+
+        const result = await readVaultTarget(config, {
+          target: "alpha.md",
+          withNoteContext: true,
+        });
+
+        expect(result).toMatchObject({
+          type: "note",
+          metadata: {
+            path: "alpha.md",
+            title: "Context Alpha",
+            tags: ["context"],
+          },
+        });
+      });
+
+      it("SHOULD treat metadata as note context for chunk reads", async () => {
+        const config = await createFixture("chunk-metadata-alias");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: Chunk Alpha\ntags:\n  - context\n---\n\n# Alpha\n\nChunk body.",
+        );
+        await indexVaultFile(config, "alpha.md");
+        const chunkId = readChunkIdByText(config.databasePath, "Chunk body.");
+
+        const result = await readVaultTarget(config, {
+          target: String(chunkId),
+          withMetadata: true,
+        });
+
+        expect(result).toMatchObject({
+          type: "chunk",
+          noteContext: {
+            path: "alpha.md",
+            title: "Chunk Alpha",
+            tags: ["context"],
           },
         });
       });

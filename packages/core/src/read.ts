@@ -364,7 +364,37 @@ function truncateText(
     return { text, truncated: false };
   }
 
-  return { text: text.slice(0, maxChars), truncated: true };
+  if (maxChars === 1) {
+    return { text: "…", truncated: true };
+  }
+
+  const truncatedText = text.slice(0, maxChars - 1);
+  const readableText = trimToReadableBoundary(
+    truncatedText,
+    text[maxChars - 1],
+  );
+
+  return { text: `${readableText}…`, truncated: true };
+}
+
+function trimToReadableBoundary(text: string, nextCharacter: string): string {
+  const trimmedText = text.trimEnd();
+
+  if (trimmedText.length < text.length) {
+    return trimmedText;
+  }
+
+  if (/\s/u.test(nextCharacter)) {
+    return trimmedText;
+  }
+
+  const boundaryIndex = trimmedText.search(/\s+\S*$/u);
+
+  if (boundaryIndex <= 0) {
+    return trimmedText;
+  }
+
+  return trimmedText.slice(0, boundaryIndex);
 }
 
 function metadataFromRow(row: NoteMetadataRow): NoteMetadata {
