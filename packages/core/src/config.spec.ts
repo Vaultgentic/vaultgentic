@@ -35,6 +35,28 @@ describe("GIVEN Vaultgentic config loading", () => {
         });
       });
 
+      it("SHOULD preserve ignored path patterns for scanner matching", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-config-"));
+        await mkdir(path.join(cwd, "vault"));
+        const configPath = path.join(cwd, "custom-config.json");
+        await writeFile(
+          configPath,
+          JSON.stringify({
+            vaultPath: "vault",
+            databasePath: ".vaultgentic/index.sqlite",
+            ignoredPaths: ["**/node_modules/**", "\\!important.md"],
+          }),
+        );
+
+        await expect(loadConfig({ configPath, cwd })).resolves.toMatchObject({
+          ignoredPaths: [
+            ...defaultIgnoredPaths,
+            "**/node_modules/**",
+            "\\!important.md",
+          ],
+        });
+      });
+
       it("SHOULD return a configured search limit", async () => {
         const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-config-"));
         const configPath = path.join(cwd, "custom-config.json");

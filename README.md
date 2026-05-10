@@ -66,7 +66,7 @@ Create a config file like this:
   "vaultPath": "/absolute/path/to/ObsidianVault",
   "databasePath": "/absolute/path/to/ObsidianVault/.vaultgentic/index.sqlite",
   "searchLimit": 5,
-  "ignoredPaths": ["Templates", "Archive/private"]
+  "ignoredPaths": ["Templates", "Archive/private", "**/node_modules/**"]
 }
 ```
 
@@ -75,7 +75,7 @@ Fields:
 - `vaultPath`: required path to your Markdown vault.
 - `databasePath`: required path for Vaultgentic's SQLite index. Keeping it inside `.vaultgentic/` in the vault is convenient and ignored by default.
 - `searchLimit`: optional default number of search results. Defaults to `5`; command-line `--limit` overrides it.
-- `ignoredPaths`: optional vault-relative paths to skip. Vaultgentic always ignores `.obsidian`, `.trash`, `node_modules`, `.git`, and `.vaultgentic`.
+- `ignoredPaths`: optional vault-relative paths or glob patterns to skip. Glob patterns are matched inside the vault only, and later `!` patterns can re-include earlier matches. Escape glob characters when they are literal path characters, for example `Project \\[Archive\\]`; use `\\!name.md` to ignore a literal path that starts with `!`. Vaultgentic always ignores `.obsidian`, `.trash`, `node_modules`, `.git`, and `.vaultgentic`.
 
 Paths inside the vault should be vault-relative and use Markdown file names such as `Projects/Alpha.md`.
 

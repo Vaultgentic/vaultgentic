@@ -1,8 +1,23 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { Minimatch, minimatch } from "minimatch";
 import { defaultIgnoredPaths, resolveVaultRelativePath } from "./config.js";
 import { VaultgenticError } from "./errors.js";
+
+type IgnoredPath = {
+  pattern: string;
+  matcher: Minimatch;
+  negated: boolean;
+  locked: boolean;
+};
+
+const minimatchOptions = {
+  dot: true,
+  magicalBraces: true,
+  nocomment: true,
+  nonegate: true,
+};
 
 export type VaultFileMetadata = {
   path: string;
@@ -60,7 +75,7 @@ export async function scanVaultFiles(
 async function scanDirectory(options: {
   vaultPath: string;
   directoryPath: string;
-  ignoredPaths: string[];
+  ignoredPaths: IgnoredPath[];
   includeContentHash: boolean;
   files: VaultFileMetadata[];
 }): Promise<void> {
@@ -73,7 +88,13 @@ async function scanDirectory(options: {
       absolutePath,
     );
 
-    if (isIgnored(relativePath, options.ignoredPaths)) {
+    const ignoreState = getIgnoreState(relativePath, options.ignoredPaths);
+    if (
+      ignoreState.ignored &&
+      (!entry.isDirectory() ||
+        ignoreState.locked ||
+        !hasNegatedDescendant(relativePath, options.ignoredPaths))
+    ) {
       continue;
     }
 
@@ -106,31 +127,162 @@ async function scanDirectory(options: {
 function normalizeIgnoredPaths(
   vaultPath: string,
   configuredIgnoredPaths: string[],
-): string[] {
+): IgnoredPath[] {
   return [
-    ...new Set(
-      [...defaultIgnoredPaths, ...configuredIgnoredPaths].flatMap(
-        (ignoredPath) => normalizeIgnoredPath(vaultPath, ignoredPath),
-      ),
-    ),
+    ...new Map(
+      [
+        ...defaultIgnoredPaths.flatMap((ignoredPath) =>
+          normalizeIgnoredPath(vaultPath, ignoredPath, true),
+        ),
+        ...configuredIgnoredPaths.flatMap((ignoredPath) =>
+          normalizeIgnoredPath(vaultPath, ignoredPath, false),
+        ),
+      ]
+        .flatMap(expandIgnoredPattern)
+        .map((ignoredPath) => [
+          `${ignoredPath.locked}:${ignoredPath.negated}:${ignoredPath.pattern}`,
+          ignoredPath,
+        ]),
+    ).values(),
   ];
 }
 
 function normalizeIgnoredPath(
   vaultPath: string,
   ignoredPath: string,
+  locked: boolean,
+): IgnoredPath[] {
+  const escapedNegation = ignoredPath.startsWith("\\!");
+  const negated = !escapedNegation && ignoredPath.startsWith("!");
+  const pattern = escapedNegation
+    ? ignoredPath.slice(1)
+    : negated
+      ? ignoredPath.slice(1)
+      : ignoredPath;
+
+  if (isGlobPattern(pattern)) {
+    return [createIgnoredPath(normalizeIgnoredGlob(pattern), negated, locked)];
+  }
+
+  return normalizeLiteralIgnoredPath(vaultPath, pattern).map((literalPath) =>
+    createIgnoredPath(literalPath, negated, locked),
+  );
+}
+
+function normalizeLiteralIgnoredPath(
+  vaultPath: string,
+  ignoredPath: string,
 ): string[] {
   return [
-    resolveVaultRelativePath(vaultPath, ignoredPath),
-    resolveScannedRelativePath(vaultPath, path.resolve(vaultPath, ignoredPath)),
+    minimatch.escape(resolveVaultRelativePath(vaultPath, ignoredPath)),
+    minimatch.escape(
+      resolveScannedRelativePath(
+        vaultPath,
+        path.resolve(vaultPath, ignoredPath),
+      ),
+    ),
   ];
 }
 
-function isIgnored(relativePath: string, ignoredPaths: string[]): boolean {
+function expandIgnoredPattern(ignoredPath: IgnoredPath): IgnoredPath[] {
+  if (ignoredPath.pattern.endsWith("/**")) {
+    return [
+      ignoredPath,
+      createIgnoredPath(
+        ignoredPath.pattern.slice(0, -3),
+        ignoredPath.negated,
+        ignoredPath.locked,
+      ),
+    ];
+  }
+
+  return [
+    ignoredPath,
+    createIgnoredPath(
+      `${ignoredPath.pattern}/**`,
+      ignoredPath.negated,
+      ignoredPath.locked,
+    ),
+  ];
+}
+
+function createIgnoredPath(
+  pattern: string,
+  negated: boolean,
+  locked: boolean,
+): IgnoredPath {
+  return {
+    pattern,
+    matcher: new Minimatch(pattern, minimatchOptions),
+    negated,
+    locked,
+  };
+}
+
+function normalizeIgnoredGlob(ignoredPath: string): string {
+  if (typeof ignoredPath !== "string" || ignoredPath.trim() === "") {
+    throw new VaultScannerError("Ignored glob must be a non-empty string");
+  }
+
+  const pattern = ignoredPath;
+  const segments = pattern.split(/[\\/]/u);
+
+  if (
+    pattern.startsWith("/") ||
+    path.win32.isAbsolute(pattern) ||
+    segments.includes("..")
+  ) {
+    throw new VaultScannerError(
+      `Ignored glob must stay inside the vault: ${ignoredPath}`,
+    );
+  }
+
+  return pattern;
+}
+
+function isIgnored(relativePath: string, ignoredPaths: IgnoredPath[]): boolean {
+  return getIgnoreState(relativePath, ignoredPaths).ignored;
+}
+
+function getIgnoreState(
+  relativePath: string,
+  ignoredPaths: IgnoredPath[],
+): { ignored: boolean; locked: boolean } {
+  let ignored = false;
+  let lockedIgnored = false;
+
+  for (const ignoredPath of ignoredPaths) {
+    if (ignoredPath.matcher.match(relativePath)) {
+      if (ignoredPath.negated) {
+        ignored = lockedIgnored;
+        continue;
+      }
+
+      ignored = true;
+      lockedIgnored = lockedIgnored || ignoredPath.locked;
+    }
+  }
+
+  return { ignored, locked: lockedIgnored };
+}
+
+function hasNegatedDescendant(
+  relativePath: string,
+  ignoredPaths: IgnoredPath[],
+): boolean {
   return ignoredPaths.some(
     (ignoredPath) =>
-      relativePath === ignoredPath ||
-      relativePath.startsWith(`${ignoredPath}/`),
+      ignoredPath.negated &&
+      (ignoredPath.pattern === relativePath ||
+        ignoredPath.pattern.startsWith(`${relativePath}/`) ||
+        ignoredPath.matcher.match(relativePath, true)),
+  );
+}
+
+function isGlobPattern(ignoredPath: string): boolean {
+  return (
+    /\\[*?[\]{}()!+@]/u.test(ignoredPath) ||
+    new Minimatch(ignoredPath, minimatchOptions).hasMagic()
   );
 }
 

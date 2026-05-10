@@ -73,10 +73,7 @@ export async function loadConfig(
   const parsedConfig = parseResult.data;
   const vaultPath = resolveVaultPath(parsedConfig.vaultPath, { cwd });
   const databasePath = path.resolve(cwd, parsedConfig.databasePath);
-  const ignoredPaths = mergeIgnoredPaths(
-    vaultPath,
-    parsedConfig.ignoredPaths ?? [],
-  );
+  const ignoredPaths = mergeIgnoredPaths(parsedConfig.ignoredPaths ?? []);
 
   return {
     vaultPath,
@@ -164,17 +161,8 @@ function resolveConfigPath(
   return getDefaultConfigPath();
 }
 
-function mergeIgnoredPaths(
-  vaultPath: string,
-  configuredPaths: string[],
-): string[] {
-  return [
-    ...new Set(
-      [...defaultIgnoredPaths, ...configuredPaths].map((entry) =>
-        resolveVaultRelativePath(vaultPath, entry),
-      ),
-    ),
-  ];
+function mergeIgnoredPaths(configuredPaths: string[]): string[] {
+  return [...new Set([...defaultIgnoredPaths, ...configuredPaths])];
 }
 
 function toPublicPath(relativePath: string): string {
