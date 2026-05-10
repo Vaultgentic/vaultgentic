@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import {
   initializeSearchDatabase,
-  loadConfig,
   refreshSearchIndex,
   vaultgenticCoreName,
   type DatabaseStatus,
@@ -14,8 +13,9 @@ import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { loadMcpServerConfig } from "./config.js";
 
-type McpServerConfig = Awaited<ReturnType<typeof loadConfig>>;
+type McpServerConfig = Awaited<ReturnType<typeof loadMcpServerConfig>>;
 
 type VaultgenticMcpServer = {
   config: McpServerConfig;
@@ -27,6 +27,8 @@ type VaultgenticMcpServer = {
 
 type CreateVaultgenticMcpServerOptions = {
   configPath?: string;
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
   refreshIndex?: (
     config: SearchDatabaseConfig,
   ) => Promise<RefreshSearchIndexResult>;
@@ -131,7 +133,11 @@ export function isMainModule(
 export async function createVaultgenticMcpServer(
   options: CreateVaultgenticMcpServerOptions = {},
 ): Promise<VaultgenticMcpServer> {
-  const config = await loadConfig({ configPath: options.configPath });
+  const config = await loadMcpServerConfig({
+    configPath: options.configPath,
+    cwd: options.cwd,
+    env: options.env,
+  });
   initializeSearchDatabase(config);
   const refreshCoordinator = createMcpIndexRefreshCoordinator(config, {
     refreshIndex: options.refreshIndex,
