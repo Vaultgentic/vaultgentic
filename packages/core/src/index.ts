@@ -71,6 +71,18 @@ export {
 } from "./read.js";
 
 export {
+  searchVault,
+  type HybridComponentName,
+  type HybridComponentScore,
+  type HybridSearchOutput,
+  type KeywordSearchOutput,
+  type SearchMode,
+  type SearchOutput,
+  type SemanticSearchOutput,
+  type TitleSearchOutput,
+} from "./search.js";
+
+export {
   embedChunkText,
   embedQueryText,
   embedText,

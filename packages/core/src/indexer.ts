@@ -107,6 +107,11 @@ export type TitleSearchResult = {
   rank: number;
 };
 
+type SearchFilterOptions = {
+  scope?: string;
+  tags?: string[];
+};
+
 export class SearchIndexerError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
@@ -455,7 +460,7 @@ export async function rebuildSearchIndex(
 
 export function searchBm25(
   config: SearchDatabaseConfig,
-  options: { query: string; limit?: number },
+  options: { query: string; limit?: number } & SearchFilterOptions,
 ): Bm25SearchResult[] {
   const query = options.query.trim();
   if (query === "") {
@@ -471,6 +476,7 @@ export function searchBm25(
       return [];
     }
 
+    const filters = buildSearchFilterSql("n", options);
     const rows = database
       .prepare(
         `
@@ -486,12 +492,17 @@ export function searchBm25(
             bm25(chunks_fts) AS score
           FROM chunks_fts
           JOIN chunks c ON c.id = chunks_fts.rowid
-          WHERE chunks_fts MATCH ?
+          JOIN notes n ON n.path = c.path
+          WHERE chunks_fts MATCH ?${filters.sql}
           ORDER BY score ASC
           LIMIT ?
         `,
       )
-      .all(ftsQuery, normalizeSearchLimit(options.limit)) as SearchRow[];
+      .all(
+        ftsQuery,
+        ...filters.params,
+        normalizeSearchLimit(options.limit),
+      ) as SearchRow[];
 
     return rows.map((row, index) => ({
       path: row.path,
@@ -514,7 +525,7 @@ export function searchBm25(
 
 export async function searchSemantic(
   config: SearchDatabaseConfig,
-  options: { query: string; limit?: number },
+  options: { query: string; limit?: number } & SearchFilterOptions,
 ): Promise<SemanticSearchResult[]> {
   const query = options.query.trim();
   if (query === "") {
@@ -527,6 +538,8 @@ export async function searchSemantic(
     ensureVectorTable(database);
     const embedding = await embedQueryText(query);
     validateEmbeddingMetadata(embedding);
+    const filters = buildSearchFilterSql("n", options);
+    const finalLimit = normalizeSearchLimit(options.limit);
     const rows = database
       .prepare(
         `
@@ -542,16 +555,20 @@ export async function searchSemantic(
             chunk_embeddings.distance AS score
           FROM chunk_embeddings
           JOIN chunks c ON c.id = chunk_embeddings.rowid
-          WHERE chunk_embeddings.embedding MATCH ? AND k = ?
+          JOIN notes n ON n.path = c.path
+          WHERE chunk_embeddings.embedding MATCH ? AND k = ?${filters.sql}
           ORDER BY score ASC
         `,
       )
       .all(
         toVectorBuffer(embedding.vector),
-        normalizeSearchLimit(options.limit),
+        filters.sql === ""
+          ? finalLimit
+          : Math.min(100, Math.max(finalLimit * 10, finalLimit)),
+        ...filters.params,
       ) as SemanticSearchRow[];
 
-    return rows.map((row, index) => ({
+    return rows.slice(0, finalLimit).map((row, index) => ({
       path: row.path,
       chunkId: row.chunkId,
       title: row.title,
@@ -572,7 +589,7 @@ export async function searchSemantic(
 
 export function searchTitles(
   config: SearchDatabaseConfig,
-  options: { query: string; limit?: number },
+  options: { query: string; limit?: number } & SearchFilterOptions,
 ): TitleSearchResult[] {
   const query = options.query.trim();
   if (query === "") {
@@ -586,16 +603,23 @@ export function searchTitles(
     const ftsQuery = buildTitleFtsQuery(query);
     const candidateIds =
       ftsQuery === "" ? [] : readTitleSearchCandidateIds(database, ftsQuery);
+    const filters = buildSearchFilterSql("notes", options);
+    const whereParts = [
+      ...(candidateIds.length > 0
+        ? [`id IN (${candidateIds.map(() => "?").join(", ")})`]
+        : []),
+      ...(filters.sql === "" ? [] : [filters.sql.slice(5)]),
+    ];
     const rows = database
       .prepare(
         `
           SELECT id, path, title, aliases_json AS aliasesJson
           FROM notes
-          ${candidateIds.length > 0 ? `WHERE id IN (${candidateIds.map(() => "?").join(", ")})` : ""}
+          ${whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : ""}
           ORDER BY path
         `,
       )
-      .all(...candidateIds) as TitleSearchRow[];
+      .all(...candidateIds, ...filters.params) as TitleSearchRow[];
     const scored = rows
       .map((row) => {
         const aliases = parseAliases(row.aliasesJson);
@@ -1342,6 +1366,36 @@ function normalizeSearchLimit(limit: number | undefined): number {
   }
 
   return Math.min(100, Math.max(1, Math.trunc(limit)));
+}
+
+function buildSearchFilterSql(
+  noteAlias: string,
+  options: SearchFilterOptions,
+): { sql: string; params: string[] } {
+  const conditions: string[] = [];
+  const params: string[] = [];
+
+  if (options.scope !== undefined) {
+    const scopePrefix = options.scope.endsWith("/")
+      ? options.scope
+      : `${options.scope}/`;
+    conditions.push(
+      `(${noteAlias}.path = ? OR substr(${noteAlias}.path, 1, length(?)) = ?)`,
+    );
+    params.push(options.scope, scopePrefix, scopePrefix);
+  }
+
+  for (const tag of options.tags ?? []) {
+    conditions.push(
+      `EXISTS (SELECT 1 FROM json_each(${noteAlias}.tags_json) WHERE value = ?)`,
+    );
+    params.push(tag);
+  }
+
+  return {
+    sql: conditions.length > 0 ? ` AND ${conditions.join(" AND ")}` : "",
+    params,
+  };
 }
 
 function scoreTitleMatch(

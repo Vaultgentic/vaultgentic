@@ -13,7 +13,7 @@ import {
   searchToolInputSchema,
   sharedCorePackageName,
 } from "./index.js";
-import type { RefreshSearchIndexResult } from "@vaultgentic/core";
+import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
 
 describe("GIVEN the MCP server skeleton", () => {
   describe("WHEN creating the server from shared config", () => {
@@ -104,7 +104,7 @@ describe("GIVEN the MCP server skeleton", () => {
 
         const mcpServer = await createVaultgenticMcpServer({ configPath });
 
-        expect(mcpServer.toolNames).toEqual([]);
+        expect(mcpServer.toolNames).toEqual(["vaultgentic_search"]);
         for (const forbiddenNamePart of forbiddenMcpToolNameParts) {
           expect(
             mcpServer.toolNames.some((toolName) =>
@@ -167,6 +167,130 @@ describe("GIVEN the MCP server skeleton", () => {
       });
     });
   });
+
+  describe("WHEN MCP callers search the vault", () => {
+    describe("THEN vaultgentic_search uses shared search after refreshing internally", () => {
+      it("SHOULD default to hybrid search with compact results and hidden scores", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        let refreshCount = 0;
+        const searched: Array<{
+          query: string;
+          mode?: string;
+          limit?: number;
+          scope?: string;
+          tags?: string[];
+        }> = [];
+
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshThrottleMs: 0,
+          refreshIndex: async () => {
+            refreshCount += 1;
+            return createRefreshResult(refreshCount);
+          },
+          search: async (_config, options) => {
+            searched.push(options);
+            return [createSearchResult({ score: 12 })];
+          },
+        });
+
+        const response = await mcpServer.search({ query: "local search" });
+
+        expect(refreshCount).toBe(2);
+        expect(searched).toEqual([{ query: "local search", mode: "hybrid" }]);
+        expect(response.mode).toBe("hybrid");
+        expect(response.results).toEqual([
+          {
+            rank: 1,
+            path: "notes/search.md",
+            title: "Search",
+            chunkId: 7,
+            matchedBy: ["keyword"],
+            headingPath: ["Details"],
+            snippet: "A compact match",
+          },
+        ]);
+        expect(response.indexStatus.noteCount).toBe(2);
+        expect(response.indexStatus).not.toHaveProperty("vaultPath");
+        expect(response.indexStatus).not.toHaveProperty("databasePath");
+        expect(response.refresh).toEqual({
+          indexed: 2,
+          skipped: 0,
+          deleted: 0,
+        });
+        expect(response.refresh).not.toHaveProperty("files");
+        expect(response.refresh).not.toHaveProperty("deletedPaths");
+        expect(response.results[0]).not.toHaveProperty("score");
+      });
+
+      it("SHOULD support explicit modes, options, and optional scores", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const searched: Array<{
+          query: string;
+          mode?: string;
+          limit?: number;
+        }> = [];
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshIndex: async () => createRefreshResult(1),
+          search: async (_config, options) => {
+            searched.push(options);
+            return [createSearchResult({ score: 0.25 })];
+          },
+        });
+
+        const response = await mcpServer.search({
+          query: "semantic idea",
+          mode: "semantic",
+          limit: 3,
+          scope: "notes/",
+          tags: ["project"],
+          includeScores: true,
+        });
+
+        expect(searched).toEqual([
+          {
+            query: "semantic idea",
+            mode: "semantic",
+            limit: 3,
+            scope: "notes/",
+            tags: ["project"],
+          },
+        ]);
+        expect(response.results[0]).toMatchObject({ score: 0.25 });
+      });
+
+      it("SHOULD reject oversized search inputs", () => {
+        expect(
+          searchToolInputSchema.safeParse({
+            query: "x".repeat(1_001),
+          }).success,
+        ).toBe(false);
+        expect(
+          searchToolInputSchema.safeParse({
+            query: "local search",
+            tags: Array.from({ length: 21 }, (_, index) => `tag-${index}`),
+          }).success,
+        ).toBe(false);
+      });
+    });
+  });
 });
 
 function createRefreshResult(indexed: number): RefreshSearchIndexResult {
@@ -201,5 +325,19 @@ function createRefreshResult(indexed: number): RefreshSearchIndexResult {
         chunkerVersion: "test",
       },
     },
+  };
+}
+
+function createSearchResult(options: { score: number }): SearchOutput {
+  return {
+    chunkId: 7,
+    path: "notes/search.md",
+    title: "Search",
+    headingPath: ["Details"],
+    snippet: "A compact match",
+    score: options.score,
+    rank: 1,
+    chunkIndex: 0,
+    matchedBy: ["keyword"],
   };
 }

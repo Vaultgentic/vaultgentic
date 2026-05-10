@@ -2,9 +2,12 @@
 import {
   initializeSearchDatabase,
   refreshSearchIndex,
+  searchVault,
   vaultgenticCoreName,
   type DatabaseStatus,
   type RefreshSearchIndexResult,
+  type SearchMode,
+  type SearchOutput,
   type SearchDatabaseConfig,
 } from "@vaultgentic/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -22,6 +25,7 @@ type VaultgenticMcpServer = {
   databaseStatus: DatabaseStatus;
   ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
   server: McpServer;
+  search: (input: SearchToolInput) => Promise<SearchToolResponse>;
   toolNames: string[];
 };
 
@@ -33,6 +37,7 @@ type CreateVaultgenticMcpServerOptions = {
     config: SearchDatabaseConfig,
   ) => Promise<RefreshSearchIndexResult>;
   refreshThrottleMs?: number;
+  search?: typeof searchVault;
 };
 
 type McpIndexRefreshCoordinator = {
@@ -47,6 +52,47 @@ type CreateMcpIndexRefreshCoordinatorOptions = {
   throttleMs?: number;
 };
 
+type SearchToolInput = z.infer<typeof searchToolInputSchema>;
+
+type CompactSearchResult = {
+  rank: number;
+  path: string;
+  title: string;
+  chunkId: number | null;
+  matchedBy: SearchOutput["matchedBy"];
+  headingPath?: string[];
+  snippet?: string;
+  score?: number;
+  componentScores?: Extract<
+    SearchOutput,
+    { componentScores: unknown }
+  >["componentScores"];
+};
+
+type SearchToolResponse = {
+  query: string;
+  mode: SearchMode;
+  results: CompactSearchResult[];
+  indexStatus: CompactIndexStatus;
+  refresh: CompactRefreshSummary;
+};
+
+type CompactRefreshSummary = Pick<
+  RefreshSearchIndexResult["sync"],
+  "indexed" | "skipped" | "deleted"
+>;
+
+type CompactIndexStatus = Pick<
+  DatabaseStatus,
+  "schemaVersion" | "noteCount" | "chunkCount" | "lastIndexedAt"
+> & {
+  sqlite: Pick<
+    DatabaseStatus["sqlite"],
+    "ok" | "fts5Available" | "sqliteVecAvailable"
+  >;
+  vectors: DatabaseStatus["vectors"];
+};
+
 const defaultRefreshThrottleMs = 5_000;
 
 const require = createRequire(import.meta.url);
@@ -59,8 +105,12 @@ export const plannedMcpToolNames = [
   "vaultgentic_read",
 ] as const;
 export const searchToolInputSchema = z.object({
-  query: z.string().trim().min(1),
+  query: z.string().trim().min(1).max(1_000),
+  mode: z.enum(["hybrid", "semantic", "keyword", "title"]).default("hybrid"),
   limit: z.number().int().min(1).max(100).optional(),
+  scope: z.string().trim().min(1).max(500).optional(),
+  tags: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
+  includeScores: z.boolean().optional(),
 });
 export const readToolInputSchema = z.object({
   target: z.string().trim().min(1),
@@ -148,13 +198,104 @@ export async function createVaultgenticMcpServer(
     name: mcpServerPackageName,
     version: packageVersion,
   });
+  const search = createSearchToolHandler({
+    config,
+    ensureIndexFresh: refreshCoordinator.ensureIndexFresh,
+    search: options.search ?? searchVault,
+  });
+  server.tool(
+    "vaultgentic_search",
+    "Search indexed vault notes",
+    searchToolInputSchema.shape,
+    async (input) => ({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(await search(input), null, 2),
+        },
+      ],
+    }),
+  );
 
   return {
     config,
     databaseStatus: refreshResult.status,
     ensureIndexFresh: refreshCoordinator.ensureIndexFresh,
+    search,
     server,
-    toolNames: [],
+    toolNames: ["vaultgentic_search"],
+  };
+}
+
+function createSearchToolHandler(options: {
+  config: McpServerConfig;
+  ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
+  search: typeof searchVault;
+}): (input: SearchToolInput) => Promise<SearchToolResponse> {
+  return async (input) => {
+    const parsedInput = searchToolInputSchema.parse(input);
+    const refreshResult = await options.ensureIndexFresh();
+    const results = await options.search(options.config, {
+      query: parsedInput.query,
+      limit: parsedInput.limit,
+      mode: parsedInput.mode,
+      scope: parsedInput.scope,
+      tags: parsedInput.tags,
+    });
+
+    return {
+      query: parsedInput.query,
+      mode: parsedInput.mode,
+      results: results.map((result) =>
+        compactSearchResult(result, parsedInput),
+      ),
+      indexStatus: compactIndexStatus(refreshResult.status),
+      refresh: compactRefreshSummary(refreshResult.sync),
+    };
+  };
+}
+
+function compactRefreshSummary(
+  sync: RefreshSearchIndexResult["sync"],
+): CompactRefreshSummary {
+  return {
+    indexed: sync.indexed,
+    skipped: sync.skipped,
+    deleted: sync.deleted,
+  };
+}
+
+function compactIndexStatus(status: DatabaseStatus): CompactIndexStatus {
+  return {
+    schemaVersion: status.schemaVersion,
+    noteCount: status.noteCount,
+    chunkCount: status.chunkCount,
+    lastIndexedAt: status.lastIndexedAt,
+    sqlite: {
+      ok: status.sqlite.ok,
+      fts5Available: status.sqlite.fts5Available,
+      sqliteVecAvailable: status.sqlite.sqliteVecAvailable,
+    },
+    vectors: status.vectors,
+  };
+}
+
+function compactSearchResult(
+  result: SearchOutput,
+  input: SearchToolInput,
+): CompactSearchResult {
+  return {
+    rank: result.rank,
+    path: result.path,
+    title: result.title,
+    chunkId: result.chunkId,
+    matchedBy: result.matchedBy,
+    ...("headingPath" in result ? { headingPath: result.headingPath } : {}),
+    ...("snippet" in result ? { snippet: result.snippet } : {}),
+    ...(input.includeScores === true ? { score: result.score } : {}),
+    ...(input.includeScores === true && "componentScores" in result
+      ? { componentScores: result.componentScores }
+      : {}),
   };
 }
 

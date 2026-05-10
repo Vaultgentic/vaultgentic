@@ -6,18 +6,18 @@ import {
   loadConfig,
   readVaultTarget,
   rebuildSearchIndex,
-  searchBm25,
-  searchSemantic,
-  searchTitles,
+  searchVault,
   syncSearchIndex,
   vaultgenticCoreName,
-  type Bm25SearchResult,
   type DatabaseStatus,
   type IndexProgressEvent,
   type ReadVaultTargetResult,
   type RebuildSearchIndexResult,
-  type SemanticSearchResult,
-  type TitleSearchResult,
+  type HybridComponentName,
+  type HybridComponentScore,
+  type HybridSearchOutput,
+  type SearchMode,
+  type SearchOutput,
 } from "@vaultgentic/core";
 import { realpathSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -31,46 +31,6 @@ import {
   shouldUseColor,
 } from "./presentation.js";
 
-type KeywordSearchOutput = Bm25SearchResult & {
-  chunkId: number;
-  matchedBy: ["keyword"];
-};
-
-type SemanticSearchOutput = SemanticSearchResult & {
-  chunkId: number;
-  matchedBy: ["vector"];
-};
-
-type TitleSearchOutput = TitleSearchResult & {
-  chunkId: null;
-  matchedBy: ["title"];
-};
-
-type HybridComponentName = "keyword" | "vector" | "title";
-
-type HybridComponentScore = {
-  rank: number;
-  score: number;
-};
-
-type HybridSearchOutput = Omit<
-  Bm25SearchResult | SemanticSearchResult | TitleSearchResult,
-  "chunkId"
-> & {
-  chunkId: number | null;
-  matchedBy: HybridComponentName[];
-  score: number;
-  componentScores: Partial<Record<HybridComponentName, HybridComponentScore>>;
-};
-
-type SearchOutput =
-  | KeywordSearchOutput
-  | SemanticSearchOutput
-  | TitleSearchOutput
-  | HybridSearchOutput;
-
-type SearchMode = "hybrid" | "keyword" | "semantic" | "title";
-
 type CreateProgramOptions = {
   confirmIndexRebuild?: () => Promise<boolean>;
   outputStream?: Pick<NodeJS.WriteStream, "isTTY">;
@@ -78,16 +38,6 @@ type CreateProgramOptions = {
 };
 
 type CliConfig = Awaited<ReturnType<typeof loadConfig>>;
-
-const hybridBm25Limit = 40;
-const hybridSemanticLimit = 40;
-const hybridTitleLimit = 10;
-const rrfK = 60;
-const hybridWeights: Record<HybridComponentName, number> = {
-  keyword: 1,
-  vector: 1,
-  title: 1.5,
-};
 
 const require = createRequire(import.meta.url);
 const packageJson = require("../package.json") as { version: string };
@@ -450,129 +400,11 @@ function parseMaxChars(value: string): number {
   return maxChars;
 }
 
-function toKeywordSearchOutput(result: Bm25SearchResult): KeywordSearchOutput {
-  return { ...result, matchedBy: ["keyword"] };
-}
-
-function toSemanticSearchOutput(
-  result: SemanticSearchResult,
-): SemanticSearchOutput {
-  return { ...result, matchedBy: ["vector"] };
-}
-
-function toTitleSearchOutput(result: TitleSearchResult): TitleSearchOutput {
-  return { ...result, chunkId: null, matchedBy: ["title"] };
-}
-
 async function search(
   config: CliConfig,
   options: { query: string; limit?: number; mode: SearchMode },
 ): Promise<SearchOutput[]> {
-  if (options.mode === "hybrid") {
-    return searchHybrid(config, options);
-  }
-
-  if (options.mode === "title") {
-    return searchTitles(config, options).map(toTitleSearchOutput);
-  }
-
-  if (options.mode === "semantic") {
-    return (await searchSemantic(config, options)).map(toSemanticSearchOutput);
-  }
-
-  return searchBm25(config, options).map(toKeywordSearchOutput);
-}
-
-async function searchHybrid(
-  config: CliConfig,
-  options: { query: string; limit?: number },
-): Promise<HybridSearchOutput[]> {
-  const finalLimit = options.limit ?? config.searchLimit;
-  const keywordLimit = Math.max(hybridBm25Limit, finalLimit);
-  const vectorLimit = Math.max(hybridSemanticLimit, finalLimit);
-  const titleLimit = Math.max(hybridTitleLimit, finalLimit);
-  const [keywordResults, vectorResults, titleResults] = await Promise.all([
-    Promise.resolve(
-      searchBm25(config, { query: options.query, limit: keywordLimit }),
-    ),
-    searchSemantic(config, { query: options.query, limit: vectorLimit }),
-    Promise.resolve(
-      searchTitles(config, { query: options.query, limit: titleLimit }),
-    ),
-  ]);
-  const candidates = new Map<string, HybridSearchOutput>();
-
-  for (const result of keywordResults) {
-    addHybridCandidate(candidates, result, "keyword");
-  }
-
-  for (const result of vectorResults) {
-    addHybridCandidate(candidates, result, "vector");
-  }
-
-  for (const result of titleResults) {
-    addHybridCandidate(candidates, result, "title");
-  }
-
-  return [...candidates.values()]
-    .sort((left, right) => {
-      if (right.score !== left.score) {
-        return right.score - left.score;
-      }
-
-      return left.rank - right.rank;
-    })
-    .slice(0, finalLimit)
-    .map((result, index) => ({ ...result, rank: index + 1 }));
-}
-
-function addHybridCandidate(
-  candidates: Map<string, HybridSearchOutput>,
-  result: Bm25SearchResult | SemanticSearchResult | TitleSearchResult,
-  componentName: HybridComponentName,
-): void {
-  const key = result.path;
-  const existing = candidates.get(key);
-  if (existing !== undefined) {
-    addHybridComponent(existing, componentName, result);
-    return;
-  }
-
-  const candidate: HybridSearchOutput = {
-    ...result,
-    chunkId: "chunkId" in result ? result.chunkId : null,
-    matchedBy: [],
-    score: 0,
-    componentScores: {},
-  };
-  addHybridComponent(candidate, componentName, result);
-  candidates.set(key, candidate);
-}
-
-function addHybridComponent(
-  candidate: HybridSearchOutput,
-  componentName: HybridComponentName,
-  result: Pick<SearchOutput, "rank" | "score">,
-): void {
-  const existingComponentScore = candidate.componentScores[componentName];
-  if (existingComponentScore !== undefined) {
-    if (existingComponentScore.rank <= result.rank) {
-      return;
-    }
-
-    candidate.score -=
-      hybridWeights[componentName] / (rrfK + existingComponentScore.rank);
-  }
-
-  if (!candidate.matchedBy.includes(componentName)) {
-    candidate.matchedBy.push(componentName);
-  }
-
-  candidate.componentScores[componentName] = {
-    rank: result.rank,
-    score: result.score,
-  };
-  candidate.score += hybridWeights[componentName] / (rrfK + result.rank);
+  return searchVault(config, options);
 }
 
 function formatSearchResults(
