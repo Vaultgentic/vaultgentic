@@ -1,16 +1,16 @@
-import Database from "better-sqlite3";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import Database from "better-sqlite3";
 import { describe, expect, it, vi } from "vitest";
 import { initializeSearchDatabase, loadSqliteVec } from "./database.js";
 import { embedChunkText } from "./embedding.js";
 import {
-  indexVaultFile,
-  refreshSearchIndex,
-  rebuildSearchIndex,
-  searchBm25,
   SearchIndexerError,
+  indexVaultFile,
+  rebuildSearchIndex,
+  refreshSearchIndex,
+  searchBm25,
   searchSemantic,
   searchTitles,
   syncSearchIndex,
@@ -125,7 +125,7 @@ describe("GIVEN a BM25 search index", () => {
         const config = await createFixture("backfill-file");
         await writeFile(
           path.join(config.vaultPath, "alpha.md"),
-          "---\ntitle: Backfill Title\n---\n\n# Alpha\n\nThe backfill keyword appears here.",
+          "---\ntitle: Frontmatter Name\n---\n\n# Alpha\n\nThe backfill keyword appears here.",
         );
         await indexVaultFile(config, "alpha.md");
         deleteFtsRows(config.databasePath);
@@ -138,7 +138,7 @@ describe("GIVEN a BM25 search index", () => {
           chunkCount: 1,
         });
         expect(searchBm25(config, { query: "backfill" })).toHaveLength(1);
-        expect(searchBm25(config, { query: "Backfill Title" })).toEqual([]);
+        expect(searchBm25(config, { query: "Frontmatter Name" })).toEqual([]);
         expect(readCounts(config.databasePath)).toEqual({
           notes: 1,
           chunks: 1,
@@ -556,6 +556,19 @@ describe("GIVEN a BM25 search index", () => {
           path: "search/embedding-index.md",
           aliases: ["Vector Lookup"],
           score: expect.any(Number),
+        });
+      });
+
+      it("SHOULD include first chunk snippets for title matches", async () => {
+        const config = await createFixture("title-search-snippet");
+        await writeTitleSearchFiles(config.vaultPath);
+        await syncSearchIndex(config);
+
+        const results = searchTitles(config, { query: "Embedding Index" });
+
+        expect(results[0]).toMatchObject({
+          path: "search/embedding-index.md",
+          snippet: "# Embedding Index Semantic notes.",
         });
       });
 

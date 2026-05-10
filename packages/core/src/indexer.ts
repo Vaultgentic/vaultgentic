@@ -103,6 +103,7 @@ export type TitleSearchResult = {
   path: string;
   title: string;
   aliases: string[];
+  snippet?: string;
   score: number;
   rank: number;
 };
@@ -167,6 +168,7 @@ type TitleSearchRow = {
   path: string;
   title: string;
   aliasesJson: string | null;
+  snippet: string | null;
 };
 
 type FtsChunkRow = {
@@ -643,7 +645,18 @@ export function searchTitles(
     const rows = database
       .prepare(
         `
-          SELECT id, path, title, aliases_json AS aliasesJson
+          SELECT
+            id,
+            path,
+            title,
+            aliases_json AS aliasesJson,
+            (
+              SELECT text
+              FROM chunks
+              WHERE chunks.path = notes.path
+              ORDER BY chunk_index
+              LIMIT 1
+            ) AS snippet
           FROM notes
           ${whereParts.length > 0 ? `WHERE ${whereParts.join(" AND ")}` : ""}
           ORDER BY path
@@ -670,6 +683,9 @@ export function searchTitles(
       path: entry.row.path,
       title: entry.row.title,
       aliases: entry.aliases,
+      ...(entry.row.snippet === null
+        ? {}
+        : { snippet: formatSemanticSnippet(entry.row.snippet) }),
       score: entry.score,
       rank: index + 1,
     }));
