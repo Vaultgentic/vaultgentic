@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -14,6 +14,10 @@ import {
   sharedCorePackageName,
 } from "./index.js";
 import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
+import type {
+  ReadVaultTargetOptions,
+  ReadVaultTargetResult,
+} from "@vaultgentic/core";
 
 describe("GIVEN the MCP server skeleton", () => {
   describe("WHEN creating the server from shared config", () => {
@@ -104,7 +108,10 @@ describe("GIVEN the MCP server skeleton", () => {
 
         const mcpServer = await createVaultgenticMcpServer({ configPath });
 
-        expect(mcpServer.toolNames).toEqual(["vaultgentic_search"]);
+        expect(mcpServer.toolNames).toEqual([
+          "vaultgentic_search",
+          "vaultgentic_read",
+        ]);
         for (const forbiddenNamePart of forbiddenMcpToolNameParts) {
           expect(
             mcpServer.toolNames.some((toolName) =>
@@ -291,6 +298,197 @@ describe("GIVEN the MCP server skeleton", () => {
       });
     });
   });
+
+  describe("WHEN MCP callers read from the vault", () => {
+    describe("THEN vaultgentic_read uses shared read after refreshing internally", () => {
+      it("SHOULD read note paths with compact index metadata", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        let refreshCount = 0;
+        const reads: ReadVaultTargetOptions[] = [];
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshThrottleMs: 0,
+          refreshIndex: async () => {
+            refreshCount += 1;
+            return createRefreshResult(refreshCount);
+          },
+          read: async (_config, options) => {
+            reads.push(options);
+            return createNoteReadResult({ content: "# Alpha" });
+          },
+        });
+
+        const response = await mcpServer.read({ target: "alpha.md" });
+
+        expect(refreshCount).toBe(2);
+        expect(reads).toEqual([{ target: "alpha.md", maxChars: 20_000 }]);
+        expect(response.result).toMatchObject({
+          type: "note",
+          path: "alpha.md",
+          content: "# Alpha",
+        });
+        expect(response.indexStatus.noteCount).toBe(2);
+        expect(response.indexStatus).not.toHaveProperty("vaultPath");
+        expect(response.refresh).toEqual({
+          indexed: 2,
+          skipped: 0,
+          deleted: 0,
+        });
+      });
+
+      it("SHOULD read numeric chunk ids and pass metadata options", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const reads: ReadVaultTargetOptions[] = [];
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshIndex: async () => createRefreshResult(1),
+          read: async (_config, options) => {
+            reads.push(options);
+            return createChunkReadResult({ text: "Chunk text" });
+          },
+        });
+
+        const response = await mcpServer.read({
+          target: 7,
+          maxChars: 10,
+          includeMetadata: true,
+          includeNoteContext: true,
+        });
+
+        expect(reads).toEqual([
+          {
+            target: "7",
+            maxChars: 10,
+            withMetadata: true,
+            withNoteContext: true,
+          },
+        ]);
+        expect(response.result).toMatchObject({
+          type: "chunk",
+          id: 7,
+          text: "Chunk text",
+          noteContext: { path: "alpha.md" },
+        });
+      });
+
+      it("SHOULD reject ambiguous string targets", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({ configPath });
+
+        await expect(mcpServer.read({ target: "alpha" })).rejects.toThrow(
+          "Read target must be a numeric chunk id or vault-relative .md note path",
+        );
+      });
+
+      it("SHOULD reject traversal outside the vault through the shared service", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({ configPath });
+
+        await expect(
+          mcpServer.read({ target: "../escape.md" }),
+        ).rejects.toThrow("Invalid read path");
+      });
+
+      it("SHOULD read changed notes after internal refresh", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(path.join(vaultPath, "alpha.md"), "Before");
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshThrottleMs: 0,
+        });
+        await writeFile(path.join(vaultPath, "alpha.md"), "After");
+
+        const response = await mcpServer.read({ target: "alpha.md" });
+
+        expect(response.result).toMatchObject({
+          type: "note",
+          content: "After",
+        });
+      });
+
+      it("SHOULD report deleted chunk targets after internal refresh", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          path.join(vaultPath, "alpha.md"),
+          "# Alpha\n\nChunk text",
+        );
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          refreshThrottleMs: 0,
+        });
+        await unlink(path.join(vaultPath, "alpha.md"));
+
+        await expect(mcpServer.read({ target: 1 })).rejects.toThrow(
+          "Chunk not found",
+        );
+      });
+
+      it("SHOULD reject oversized read inputs", () => {
+        expect(
+          readToolInputSchema.safeParse({ target: `${"x".repeat(501)}.md` })
+            .success,
+        ).toBe(false);
+        expect(
+          readToolInputSchema.safeParse({ target: "alpha.md", maxChars: 0 })
+            .success,
+        ).toBe(false);
+        expect(
+          readToolInputSchema.safeParse({
+            target: "alpha.md",
+            maxChars: 200_001,
+          }).success,
+        ).toBe(false);
+      });
+    });
+  });
 });
 
 function createRefreshResult(indexed: number): RefreshSearchIndexResult {
@@ -339,5 +537,42 @@ function createSearchResult(options: { score: number }): SearchOutput {
     rank: 1,
     chunkIndex: 0,
     matchedBy: ["keyword"],
+  };
+}
+
+function createNoteReadResult(options: {
+  content: string;
+}): ReadVaultTargetResult {
+  return {
+    type: "note",
+    path: "alpha.md",
+    content: options.content,
+    truncated: false,
+    originalLength: options.content.length,
+  };
+}
+
+function createChunkReadResult(options: {
+  text: string;
+}): ReadVaultTargetResult {
+  return {
+    type: "chunk",
+    id: 7,
+    path: "alpha.md",
+    title: "Alpha",
+    headingPath: ["Alpha"],
+    chunkIndex: 0,
+    text: options.text,
+    truncated: false,
+    originalLength: options.text.length,
+    noteContext: {
+      path: "alpha.md",
+      title: "Alpha",
+      aliases: [],
+      tags: [],
+      frontmatter: {},
+      links: [],
+      indexedAt: Date.now(),
+    },
   };
 }
