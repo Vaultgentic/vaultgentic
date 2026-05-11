@@ -6,6 +6,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
 import type {
+  PatchVaultNoteOptions,
+  PatchVaultNoteResult,
   ReadVaultTargetOptions,
   ReadVaultTargetResult,
   WriteVaultNoteOptions,
@@ -20,6 +22,7 @@ import {
   forbiddenMcpToolNameParts,
   mcpServerPackageName,
   mcpToolPrefix,
+  patchToolInputSchema,
   plannedMcpToolNames,
   readToolInputSchema,
   searchToolInputSchema,
@@ -85,6 +88,7 @@ describe("GIVEN the MCP server skeleton", () => {
           "vaultgentic_search",
           "vaultgentic_read",
           "vaultgentic_write",
+          "vaultgentic_patch",
         ]);
         expect(
           plannedMcpToolNames.every((name) => name.startsWith(mcpToolPrefix)),
@@ -102,6 +106,12 @@ describe("GIVEN the MCP server skeleton", () => {
         expect(
           writeToolInputSchema.safeParse({ path: "note.md", body: "Body" })
             .success,
+        ).toBe(true);
+        expect(
+          patchToolInputSchema.safeParse({
+            path: "note.md",
+            patch: createPatchText("note.md"),
+          }).success,
         ).toBe(true);
       });
 
@@ -125,6 +135,7 @@ describe("GIVEN the MCP server skeleton", () => {
           "vaultgentic_search",
           "vaultgentic_read",
           "vaultgentic_write",
+          "vaultgentic_patch",
         ]);
         for (const forbiddenNamePart of forbiddenMcpToolNameParts) {
           expect(
@@ -582,6 +593,70 @@ describe("GIVEN the MCP server skeleton", () => {
     });
   });
 
+  describe("WHEN MCP callers patch the vault", () => {
+    describe("THEN vaultgentic_patch uses the shared patch service", () => {
+      it("SHOULD patch notes with metadata only responses", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const patches: PatchVaultNoteOptions[] = [];
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          patch: async (_config, options) => {
+            patches.push(options);
+            return createPatchResult({ path: options.path, indexed: true });
+          },
+        });
+
+        const response = await mcpServer.patch({
+          path: "notes/alpha.md",
+          patch: createPatchText("notes/alpha.md", "Secret body"),
+          expectedFileHash:
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        });
+
+        expect(patches).toEqual([
+          {
+            path: "notes/alpha.md",
+            patch: createPatchText("notes/alpha.md", "Secret body"),
+            expectedFileHash:
+              "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          },
+        ]);
+        expect(response).toEqual({
+          result: { path: "notes/alpha.md", indexed: true },
+        });
+        expect(JSON.stringify(response)).not.toContain("Secret body");
+      });
+
+      it("SHOULD reject invalid patch tool input", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({ configPath });
+
+        await expect(
+          mcpServer.patch({ path: "alpha.md", patch: "   \n" }),
+        ).rejects.toMatchObject({
+          code: "invalid_tool_input",
+          expected: true,
+        });
+      });
+    });
+  });
+
   describe("WHEN MCP callers invoke registered tools", () => {
     describe("THEN registered callbacks return MCP-shaped results", () => {
       it("SHOULD return known search hits through vaultgentic_search", async () => {
@@ -754,6 +829,57 @@ describe("GIVEN the MCP server skeleton", () => {
         });
         expect(result.isError).toBeUndefined();
       });
+
+      it("SHOULD expose patch description through vaultgentic_patch", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({ configPath });
+
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
+        ).toBe(
+          "Apply a strict unified diff to an existing vault markdown note",
+        );
+      });
+
+      it("SHOULD return patch metadata through vaultgentic_patch", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          patch: async () =>
+            createPatchResult({ path: "alpha.md", indexed: true }),
+        });
+
+        const result = await callRegisteredTool(
+          mcpServer.server,
+          "vaultgentic_patch",
+          {
+            path: "alpha.md",
+            patch: createPatchText("alpha.md", "Registered patch"),
+          },
+        );
+
+        expect(readToolJson(result)).toEqual({
+          result: { path: "alpha.md", indexed: true },
+        });
+        expect(JSON.stringify(result)).not.toContain("Registered patch");
+        expect(result.isError).toBeUndefined();
+      });
     });
   });
 });
@@ -762,6 +888,7 @@ type RegisteredMcpServer = {
   _registeredTools: Record<
     string,
     {
+      description?: string;
       handler: (
         input: Record<string, unknown>,
         extra: unknown,
@@ -777,6 +904,16 @@ async function callRegisteredTool(
 ): Promise<CallToolResult> {
   const registeredServer = server as RegisteredMcpServer;
   return registeredServer._registeredTools[name].handler(input, {});
+}
+
+function getRegisteredToolDescription(server: unknown, name: string): string {
+  const registeredServer = server as RegisteredMcpServer;
+  const description = registeredServer._registeredTools[name].description;
+  if (description === undefined) {
+    throw new Error(`Expected ${name} to have a description`);
+  }
+
+  return description;
 }
 
 function readToolJson(result: CallToolResult): Record<string, unknown> {
@@ -882,6 +1019,20 @@ function createWriteResult(options: {
   return {
     path: options.path,
     operation: options.operation,
+    indexed: options.indexed,
+  };
+}
+
+function createPatchText(path: string, replacement = "Updated body"): string {
+  return `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-Old body\n+${replacement}\n`;
+}
+
+function createPatchResult(options: {
+  path: string;
+  indexed: boolean;
+}): PatchVaultNoteResult {
+  return {
+    path: options.path,
     indexed: options.indexed,
   };
 }

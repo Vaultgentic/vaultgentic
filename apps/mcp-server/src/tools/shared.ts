@@ -43,6 +43,7 @@ export const plannedMcpToolNames = [
   "vaultgentic_search",
   "vaultgentic_read",
   "vaultgentic_write",
+  "vaultgentic_patch",
 ] as const;
 export const forbiddenMcpToolNameParts = [
   "sync",

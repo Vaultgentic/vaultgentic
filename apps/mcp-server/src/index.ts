@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {
   initializeSearchDatabase,
+  patchVaultNote,
   readVaultTarget,
   searchVault,
   writeVaultNote,
@@ -23,6 +24,12 @@ import {
   sharedCorePackageName,
   toMcpToolError,
 } from "./tools/shared.js";
+import {
+  createPatchToolHandler,
+  patchToolInputSchema,
+  type PatchToolInput,
+  type PatchToolResponse,
+} from "./tools/patch.js";
 import {
   createReadToolHandler,
   readToolInputSchema,
@@ -47,6 +54,7 @@ export {
   createMcpIndexRefreshCoordinator,
   forbiddenMcpToolNameParts,
   mcpToolPrefix,
+  patchToolInputSchema,
   plannedMcpToolNames,
   readToolInputSchema,
   searchToolInputSchema,
@@ -58,6 +66,7 @@ type VaultgenticMcpServer = {
   config: Awaited<ReturnType<typeof loadMcpServerConfig>>;
   databaseStatus: DatabaseStatus;
   ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
+  patch: (input: PatchToolInput) => Promise<PatchToolResponse>;
   read: (input: ReadToolInput) => Promise<ReadToolResponse>;
   server: McpServer;
   search: (input: SearchToolInput) => Promise<SearchToolResponse>;
@@ -72,6 +81,7 @@ type CreateVaultgenticMcpServerOptions = {
   refreshIndex?: (
     config: SearchDatabaseConfig,
   ) => Promise<RefreshSearchIndexResult>;
+  patch?: typeof patchVaultNote;
   read?: typeof readVaultTarget;
   refreshThrottleMs?: number;
   search?: typeof searchVault;
@@ -127,6 +137,10 @@ export async function createVaultgenticMcpServer(
     config,
     write: options.write ?? writeVaultNote,
   });
+  const patch = createPatchToolHandler({
+    config,
+    patch: options.patch ?? patchVaultNote,
+  });
 
   server.tool(
     "vaultgentic_search",
@@ -146,15 +160,22 @@ export async function createVaultgenticMcpServer(
     writeToolInputSchema.shape,
     async (input) => toMcpToolResult(write(input)),
   );
+  server.tool(
+    "vaultgentic_patch",
+    "Apply a strict unified diff to an existing vault markdown note",
+    patchToolInputSchema.shape,
+    async (input) => toMcpToolResult(patch(input)),
+  );
 
   return {
     config,
     databaseStatus: refreshResult.status,
     ensureIndexFresh: refreshCoordinator.ensureIndexFresh,
+    patch,
     read,
     search,
     server,
-    toolNames: ["vaultgentic_search", "vaultgentic_read", "vaultgentic_write"],
+    toolNames: [...plannedMcpToolNames],
     write,
   };
 }
