@@ -1,5 +1,13 @@
 # @vaultgentic/mcp-server
 
+## 0.0.5
+
+### Patch Changes
+
+- c9043b4: Fix path filter missing from search diagnostics; add scope/path mutual exclusion; move tool parameter detail into schema descriptions
+- Updated dependencies [c9043b4]
+  - @vaultgentic/core@0.0.5
+
 ## 0.0.4
 
 ### Patch Changes
