@@ -3,3 +3,6 @@ dist/
 .turbo/
 coverage/
 *.tsbuildinfo
+.claude/
+.env
+.env.*
