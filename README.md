@@ -26,6 +26,13 @@ npm install --global @vaultgentic/cli
 vaultgentic --help
 ```
 
+For MCP clients, install the MCP server package. npm installs `@vaultgentic/core` automatically as a dependency:
+
+```sh
+npm install --global @vaultgentic/mcp-server
+vaultgentic-mcp-server
+```
+
 Only install the core package directly when building your own app or tool against Vaultgentic's APIs:
 
 ```sh
@@ -214,6 +221,53 @@ Print structured JSON:
 vaultgentic read Projects/Alpha.md --json --config /path/to/config.json
 ```
 
+## Use the MCP server
+
+The `@vaultgentic/mcp-server` package exposes Vaultgentic search, read, and write tools to MCP-compatible clients over stdio.
+
+After configuring npm for GitHub Packages as shown in [Install with npm](#install-with-npm), install it globally:
+
+```sh
+npm install --global @vaultgentic/mcp-server
+```
+
+Configure the server with either the standard Vaultgentic config file or a vault path environment variable:
+
+```sh
+export VAULTGENTIC_CONFIG=/path/to/config.json
+vaultgentic-mcp-server
+```
+
+Or:
+
+```sh
+export VAULTGENTIC_VAULT_PATH=/absolute/path/to/ObsidianVault
+vaultgentic-mcp-server
+```
+
+When `VAULTGENTIC_VAULT_PATH` is used without a config file, the server stores its SQLite index at `.vaultgentic/index.sqlite` inside the vault and uses the default ignored paths.
+
+Example MCP client command configuration:
+
+```json
+{
+  "command": "vaultgentic-mcp-server",
+  "env": {
+    "VAULTGENTIC_CONFIG": "/path/to/config.json"
+  }
+}
+```
+
+Available tools:
+
+| Tool | Purpose |
+|---|---|
+| `vaultgentic_search` | Search indexed vault notes by query, mode, scope, tags, and result limit |
+| `vaultgentic_read` | Read a vault-relative Markdown note path or indexed chunk id |
+| `vaultgentic_write` | Create or update an Obsidian-compatible Markdown note |
+
+Search and read refresh the index internally before responding. Write creates or updates the note and reindexes the changed file so later searches can find it.
+
 ## Common options
 
 - `--config <path>`: read a specific config file.
@@ -239,8 +293,7 @@ Vaultgentic uses Changesets to version and publish packages to GitHub Packages. 
 
 - `@vaultgentic/core`
 - `@vaultgentic/cli`
-
-`@vaultgentic/mcp-server` remains private until it is ready to publish.
+- `@vaultgentic/mcp-server`
 
 Create a changeset for a user-facing package change:
 

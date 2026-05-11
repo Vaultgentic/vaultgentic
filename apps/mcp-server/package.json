@@ -1,10 +1,21 @@
 {
   "name": "@vaultgentic/mcp-server",
-  "version": "0.0.0",
-  "private": true,
+  "version": "0.0.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "engines": {
+    "node": ">=24"
+  },
+  "files": ["dist"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vaultgentic/vaultgentic.git",
+    "directory": "apps/mcp-server"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "bin": {
     "vaultgentic-mcp-server": "dist/index.js"
   },
