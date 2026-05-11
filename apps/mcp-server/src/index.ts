@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import {
+  defaultArchiveFolder,
+  defaultArchiveOnRemove,
   initializeSearchDatabase,
   patchVaultNote,
   readVaultTarget,
+  removeVaultNote,
   searchVault,
   writeVaultNote,
 } from "@vaultgentic/core";
@@ -31,6 +34,12 @@ import {
   type PatchToolResponse,
 } from "./tools/patch.js";
 import {
+  createRemoveToolHandler,
+  removeToolInputSchema,
+  type RemoveToolInput,
+  type RemoveToolResponse,
+} from "./tools/remove.js";
+import {
   createReadToolHandler,
   readToolInputSchema,
   type ReadToolInput,
@@ -57,6 +66,7 @@ export {
   patchToolInputSchema,
   plannedMcpToolNames,
   readToolInputSchema,
+  removeToolInputSchema,
   searchToolInputSchema,
   sharedCorePackageName,
   writeToolInputSchema,
@@ -68,6 +78,7 @@ type VaultgenticMcpServer = {
   ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
   patch: (input: PatchToolInput) => Promise<PatchToolResponse>;
   read: (input: ReadToolInput) => Promise<ReadToolResponse>;
+  remove: (input: RemoveToolInput) => Promise<RemoveToolResponse>;
   server: McpServer;
   search: (input: SearchToolInput) => Promise<SearchToolResponse>;
   toolNames: string[];
@@ -84,6 +95,7 @@ type CreateVaultgenticMcpServerOptions = {
   patch?: typeof patchVaultNote;
   read?: typeof readVaultTarget;
   refreshThrottleMs?: number;
+  remove?: typeof removeVaultNote;
   search?: typeof searchVault;
   write?: typeof writeVaultNote;
 };
@@ -105,6 +117,17 @@ const writeToolDescription =
 
 const patchToolDescription =
   "Apply a strict unified diff to an existing vault markdown note. Requires path and patch; include expectedFileHash from a prior read to prevent stale concurrent edits. Read the note first when generating the diff or hash, and retry from fresh content if a conflict or hash mismatch occurs. The response is metadata-only JSON with path and indexing status; it does not echo patch contents.";
+
+function createRemoveToolDescription(
+  config: Awaited<ReturnType<typeof loadMcpServerConfig>>,
+): string {
+  const archiveOnRemove = config.archiveOnRemove ?? defaultArchiveOnRemove;
+  const removeBehavior = archiveOnRemove
+    ? `Configured to archive removed notes under ${config.archiveFolder ?? defaultArchiveFolder}.`
+    : "Configured to permanently delete removed notes.";
+
+  return `Remove an existing Obsidian-compatible markdown note from the vault. Requires path and optional expectedFileHash; strongly prefer reading first and passing the returned hash to prevent stale concurrent deletion. ${removeBehavior} The response is metadata-only JSON with path, operation, archive path when applicable, and index cleanup status; it does not echo note contents.`;
+}
 
 export function isMainModule(
   moduleUrl: string,
@@ -153,6 +176,10 @@ export async function createVaultgenticMcpServer(
     config,
     patch: options.patch ?? patchVaultNote,
   });
+  const remove = createRemoveToolHandler({
+    config,
+    remove: options.remove ?? removeVaultNote,
+  });
 
   server.tool(
     "vaultgentic_search",
@@ -178,6 +205,12 @@ export async function createVaultgenticMcpServer(
     patchToolInputSchema.shape,
     async (input) => toMcpToolResult(patch(input)),
   );
+  server.tool(
+    "vaultgentic_remove",
+    createRemoveToolDescription(config),
+    removeToolInputSchema.shape,
+    async (input) => toMcpToolResult(remove(input)),
+  );
 
   return {
     config,
@@ -185,6 +218,7 @@ export async function createVaultgenticMcpServer(
     ensureIndexFresh: refreshCoordinator.ensureIndexFresh,
     patch,
     read,
+    remove,
     search,
     server,
     toolNames: [...plannedMcpToolNames],
