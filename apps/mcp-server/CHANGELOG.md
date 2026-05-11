@@ -1,5 +1,13 @@
 # @vaultgentic/mcp-server
 
+## 0.0.4
+
+### Patch Changes
+
+- 3e8fe1d: Fix patch diff application issues around blank lines
+- Updated dependencies [3e8fe1d]
+  - @vaultgentic/core@0.0.4
+
 ## 0.0.3
 
 ### Patch Changes
