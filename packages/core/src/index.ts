@@ -80,6 +80,13 @@ export {
 } from "./write.js";
 
 export {
+  patchVaultNote,
+  VaultPatchError,
+  type PatchVaultNoteOptions,
+  type PatchVaultNoteResult,
+} from "./patch.js";
+
+export {
   searchVault,
   type HybridComponentName,
   type HybridComponentScore,
