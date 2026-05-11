@@ -10,8 +10,8 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 
 permissions:
   contents: write
-  id-token: write
   pull-requests: write
+  packages: write
 
 jobs:
   release:
@@ -28,16 +28,15 @@ jobs:
         with:
           node-version: lts/*
           cache: pnpm
-          registry-url: https://registry.npmjs.org
+          registry-url: https://npm.pkg.github.com
           scope: "@vaultgentic"
       - run: pnpm install --frozen-lockfile
-      - name: Configure npm publishing auth
-        if: ${{ secrets.NPM_TOKEN != '' }}
+      - name: Configure GitHub Packages auth
         run: |
-          pnpm config set @vaultgentic:registry https://registry.npmjs.org
-          pnpm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
+          pnpm config set @vaultgentic:registry https://npm.pkg.github.com
+          pnpm config set //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: changesets/action@v1
         with:
           version: pnpm version-packages
@@ -46,5 +45,4 @@ jobs:
           commit: Version packages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

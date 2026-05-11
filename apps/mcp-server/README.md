@@ -4,6 +4,18 @@ The Vaultgentic MCP server exposes local vault search, read, and write tools to 
 
 ## Install
 
+Vaultgentic packages are published on GitHub Packages. Configure npm for the `@vaultgentic` scope first:
+
+```sh
+npm config set @vaultgentic:registry https://npm.pkg.github.com
+```
+
+GitHub Packages requires npm authentication even for public packages. Use a GitHub token with package read access:
+
+```sh
+npm login --scope=@vaultgentic --auth-type=legacy --registry=https://npm.pkg.github.com
+```
+
 Install the MCP server globally:
 
 ```sh

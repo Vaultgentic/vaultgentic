@@ -14,8 +14,7 @@
     "directory": "apps/mcp-server"
   },
   "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://npm.pkg.github.com"
   },
   "bin": {
     "vaultgentic-mcp-server": "dist/index.js"
