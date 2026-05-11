@@ -83,31 +83,30 @@ describe("GIVEN the index file command", () => {
           configPath,
           JSON.stringify({ vaultPath, databasePath }),
         );
-        const output: string[] = [];
-        const previousLog = console.log;
-        console.log = (message?: unknown) => {
-          output.push(String(message));
-        };
+        let output = "";
 
-        try {
-          await createProgram().parseAsync(
-            [
-              "node",
-              "vaultgentic",
-              "index",
-              "file",
-              "alpha.md",
-              "--config",
-              configPath,
-              "--json",
-            ],
-            { from: "node" },
-          );
-        } finally {
-          console.log = previousLog;
-        }
+        await createProgram({
+          outputStream: {
+            isTTY: false,
+            write: (message) => {
+              output += message;
+            },
+          },
+        }).parseAsync(
+          [
+            "node",
+            "vaultgentic",
+            "index",
+            "file",
+            "alpha.md",
+            "--config",
+            configPath,
+            "--json",
+          ],
+          { from: "node" },
+        );
 
-        expect(JSON.parse(output.join("\n"))).toMatchObject({
+        expect(JSON.parse(output)).toMatchObject({
           path: "alpha.md",
           status: "indexed",
           chunkCount: 1,
@@ -134,30 +133,29 @@ describe("GIVEN the index sync command", () => {
           configPath,
           JSON.stringify({ vaultPath, databasePath }),
         );
-        const output: string[] = [];
-        const previousLog = console.log;
-        console.log = (message?: unknown) => {
-          output.push(String(message));
-        };
+        let output = "";
 
-        try {
-          await createProgram().parseAsync(
-            [
-              "node",
-              "vaultgentic",
-              "index",
-              "sync",
-              "--config",
-              configPath,
-              "--json",
-            ],
-            { from: "node" },
-          );
-        } finally {
-          console.log = previousLog;
-        }
+        await createProgram({
+          outputStream: {
+            isTTY: false,
+            write: (message) => {
+              output += message;
+            },
+          },
+        }).parseAsync(
+          [
+            "node",
+            "vaultgentic",
+            "index",
+            "sync",
+            "--config",
+            configPath,
+            "--json",
+          ],
+          { from: "node" },
+        );
 
-        expect(JSON.parse(output.join("\n"))).toMatchObject({
+        expect(JSON.parse(output)).toMatchObject({
           indexed: 1,
           skipped: 0,
           deleted: 0,
@@ -1304,6 +1302,13 @@ function readIndexedPaths(config: {
 async function captureConsoleLog(
   callback: () => Promise<void>,
 ): Promise<string> {
+  const previousCapture = consoleLogCapture;
+  let releaseCapture = () => {};
+  consoleLogCapture = new Promise((resolve) => {
+    releaseCapture = resolve;
+  });
+  await previousCapture;
+
   const output: string[] = [];
   const previousLog = console.log;
   console.log = (message?: unknown) => {
@@ -1314,10 +1319,13 @@ async function captureConsoleLog(
     await callback();
   } finally {
     console.log = previousLog;
+    releaseCapture();
   }
 
   return output.join("\n");
 }
+
+let consoleLogCapture = Promise.resolve();
 
 async function captureStderr(
   callback: (

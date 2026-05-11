@@ -33,7 +33,9 @@ import {
 
 type CreateProgramOptions = {
   confirmIndexRebuild?: () => Promise<boolean>;
-  outputStream?: Pick<NodeJS.WriteStream, "isTTY">;
+  outputStream?: Pick<NodeJS.WriteStream, "isTTY"> & {
+    write?: (message: string) => unknown;
+  };
   progressStream?: Pick<NodeJS.WriteStream, "isTTY" | "write">;
 };
 
@@ -58,6 +60,14 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
   const tableColor = shouldUseColor(options.outputStream ?? process.stdout);
   const progressStream = options.progressStream ?? process.stderr;
   const tableOptions = { color: tableColor, table: tableOutput === true };
+  const print = (message: string) => {
+    if (options.outputStream?.write !== undefined) {
+      options.outputStream.write(`${message}\n`);
+      return;
+    }
+
+    console.log(message);
+  };
   const program = new Command()
     .name("vaultgentic")
     .description("Local Obsidian search and MCP tooling")
@@ -93,11 +103,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         );
 
         if (options.json === true) {
-          console.log(JSON.stringify(result, null, 2));
+          print(JSON.stringify(result, null, 2));
           return;
         }
 
-        console.log(formatIndexFileResult(result, tableOptions));
+        print(formatIndexFileResult(result, tableOptions));
       },
     );
 
@@ -119,11 +129,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       );
 
       if (options.json === true) {
-        console.log(JSON.stringify(result, null, 2));
+        print(JSON.stringify(result, null, 2));
         return;
       }
 
-      console.log(formatSyncResult(result, tableOptions));
+      print(formatSyncResult(result, tableOptions));
     });
 
   indexCommand
@@ -138,11 +148,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
           const confirmed = await confirmIndexRebuild();
           if (!confirmed) {
             if (options.json === true) {
-              console.log(JSON.stringify({ cancelled: true }, null, 2));
+              print(JSON.stringify({ cancelled: true }, null, 2));
               return;
             }
 
-            console.log("Rebuild cancelled.");
+            print("Rebuild cancelled.");
             return;
           }
         }
@@ -159,11 +169,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         );
 
         if (options.json === true) {
-          console.log(JSON.stringify(result, null, 2));
+          print(JSON.stringify(result, null, 2));
           return;
         }
 
-        console.log(formatRebuildResult(result, tableOptions));
+        print(formatRebuildResult(result, tableOptions));
       },
     );
 
@@ -177,11 +187,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
       const status = initializeSearchDatabase(config);
 
       if (options.json === true) {
-        console.log(JSON.stringify(status, null, 2));
+        print(JSON.stringify(status, null, 2));
         return;
       }
 
-      console.log(formatStatus(status, tableOptions));
+      print(formatStatus(status, tableOptions));
     });
 
   program
@@ -212,11 +222,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         });
 
         if (options.json === true) {
-          console.log(JSON.stringify(output, null, 2));
+          print(JSON.stringify(output, null, 2));
           return;
         }
 
-        console.log(
+        print(
           formatSearchResults(output, {
             showScores: options.scores,
             ...tableOptions,
@@ -257,11 +267,11 @@ export function createProgram(options: CreateProgramOptions = {}): Command {
         });
 
         if (options.json === true) {
-          console.log(JSON.stringify(result, null, 2));
+          print(JSON.stringify(result, null, 2));
           return;
         }
 
-        console.log(formatReadResult(result, tableOptions));
+        print(formatReadResult(result, tableOptions));
       },
     );
 
