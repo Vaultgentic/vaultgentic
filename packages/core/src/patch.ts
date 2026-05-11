@@ -113,11 +113,14 @@ function parseSinglePatch(
   patchText: string,
   relativePath: string,
 ): StructuredPatch {
-  validateRawPatchText(patchText);
+  // Append \n so that a blank context line at the end of the last hunk is
+  // never the final element of split("\n"), which the diff library rejects.
+  const normalizedPatchText = `${patchText}\n`;
+  validateRawPatchText(normalizedPatchText);
 
   let patches: StructuredPatch[];
   try {
-    patches = parsePatch(patchText);
+    patches = parsePatch(normalizedPatchText);
   } catch (error) {
     throw new VaultPatchError(`Malformed patch: ${errorMessage(error)}`, {
       cause: error,
@@ -176,7 +179,7 @@ function validateRawPatchText(patchText: string): void {
     }
 
     throw new VaultPatchError(
-      "Patch contains unsupported trailing or metadata text",
+      `Patch contains unsupported trailing or metadata text: "${line}"`,
     );
   }
 }

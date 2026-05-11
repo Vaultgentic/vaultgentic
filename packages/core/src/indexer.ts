@@ -128,6 +128,7 @@ export type SearchFilterDiagnostics = {
 
 type SearchFilterOptions = {
   scope?: string;
+  path?: string;
   tags?: string[];
 };
 
@@ -1530,6 +1531,11 @@ function buildSearchFilterSql(
 ): { sql: string; params: string[] } {
   const conditions: string[] = [];
   const params: string[] = [];
+
+  if (options.path !== undefined) {
+    conditions.push(`${noteAlias}.path = ?`);
+    params.push(options.path);
+  }
 
   if (options.scope !== undefined) {
     const scopePrefix = options.scope.endsWith("/")

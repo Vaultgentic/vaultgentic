@@ -196,6 +196,150 @@ describe("GIVEN a vault patch service", () => {
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe("New note.");
       });
+
+      it("SHOULD apply a patch where a blank context line is the last array element after split", async () => {
+        // The diff library throws "contained invalid line" when an empty string
+        // is the last element of split("\n") while still inside an unsatisfied hunk.
+        // This happens when the trailing blank context line appears at end of patch.
+        const config = await createFixture("trailing-blank-context");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "Context line.\nOld line.\n\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: [
+            "--- alpha.md",
+            "+++ alpha.md",
+            "@@ -1,3 +1,3 @@",
+            " Context line.",
+            "-Old line.",
+            "+New line.",
+            "",
+          ].join("\n"),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("Context line.\nNew line.\n\n");
+      });
+
+      it("SHOULD apply a patch with a blank context line emitted as an empty string", async () => {
+        const config = await createFixture("blank-context-line");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "Line one.\n\nLine three.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: [
+            "--- alpha.md",
+            "+++ alpha.md",
+            "@@ -1,3 +1,3 @@",
+            " Line one.",
+            "",
+            "-Line three.",
+            "+Line three (updated).",
+            "",
+          ].join("\n"),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("Line one.\n\nLine three (updated).\n");
+      });
+
+      it("SHOULD apply a multi-hunk patch touching separate sections", async () => {
+        const config = await createFixture("multi-hunk");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "First line.\nMiddle line.\nLast line.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: [
+            "--- alpha.md",
+            "+++ alpha.md",
+            "@@ -1 +1 @@",
+            "-First line.",
+            "+First line (updated).",
+            "@@ -3 +3 @@",
+            "-Last line.",
+            "+Last line (updated).",
+            "",
+          ].join("\n"),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe(
+          "First line (updated).\nMiddle line.\nLast line (updated).\n",
+        );
+      });
+
+      it("SHOULD apply a multi-hunk patch that includes blank context lines", async () => {
+        const config = await createFixture("multi-hunk-blank-context");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "First section.\n\nSecond section.\n\nThird section.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: [
+            "--- alpha.md",
+            "+++ alpha.md",
+            "@@ -1,2 +1,2 @@",
+            "-First section.",
+            "+First section (updated).",
+            "",
+            "@@ -4,2 +4,2 @@",
+            "",
+            "-Third section.",
+            "+Third section (updated).",
+            "",
+          ].join("\n"),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe(
+          "First section (updated).\n\nSecond section.\n\nThird section (updated).\n",
+        );
+      });
+
+      it("SHOULD apply a multi-hunk patch spanning frontmatter and body", async () => {
+        const config = await createFixture("frontmatter-and-body");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: Old Title\n---\n\nBody text.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: [
+            "--- alpha.md",
+            "+++ alpha.md",
+            "@@ -1,3 +1,3 @@",
+            " ---",
+            "-title: Old Title",
+            "+title: New Title",
+            " ---",
+            "@@ -4,2 +4,2 @@",
+            "",
+            "-Body text.",
+            "+Updated body text.",
+            "",
+          ].join("\n"),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("---\ntitle: New Title\n---\n\nUpdated body text.\n");
+      });
     });
   });
 

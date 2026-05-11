@@ -64,6 +64,7 @@ export const searchToolInputSchema = z.object({
   mode: z.enum(["hybrid", "semantic", "keyword", "title"]).default("hybrid"),
   limit: z.number().int().min(1).max(100).optional(),
   scope: z.string().trim().min(1).max(500).optional(),
+  path: z.string().trim().min(1).max(500).optional(),
   tags: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
   includeScores: z.boolean().optional(),
 });
@@ -83,6 +84,7 @@ export function createSearchToolHandler(options: {
         limit: parsedInput.limit,
         mode: parsedInput.mode,
         scope: parsedInput.scope,
+        path: parsedInput.path,
         tags: parsedInput.tags,
       });
 
@@ -122,6 +124,7 @@ export function createSearchToolHandler(options: {
 function hasSearchFilters(input: SearchToolInput): boolean {
   return (
     input.scope !== undefined ||
+    input.path !== undefined ||
     (input.tags !== undefined && input.tags.length > 0)
   );
 }

@@ -65,6 +65,7 @@ export async function searchVault(
     limit?: number;
     mode?: SearchMode;
     scope?: string;
+    path?: string;
     tags?: string[];
   },
 ): Promise<SearchOutput[]> {
@@ -77,30 +78,21 @@ export async function searchVault(
   }
 
   if (mode === "title") {
-    return filterSearchResults(
-      config,
-      searchTitles(config, searchOptions).map(toTitleSearchOutput),
-      options,
-    )
+    return searchTitles(config, searchOptions)
+      .map(toTitleSearchOutput)
       .slice(0, finalLimit)
       .map(withSearchRank);
   }
 
   if (mode === "semantic") {
-    return filterSearchResults(
-      config,
-      (await searchSemantic(config, searchOptions)).map(toSemanticSearchOutput),
-      options,
-    )
+    return (await searchSemantic(config, searchOptions))
+      .map(toSemanticSearchOutput)
       .slice(0, finalLimit)
       .map(withSearchRank);
   }
 
-  return filterSearchResults(
-    config,
-    searchBm25(config, searchOptions).map(toKeywordSearchOutput),
-    options,
-  )
+  return searchBm25(config, searchOptions)
+    .map(toKeywordSearchOutput)
     .slice(0, finalLimit)
     .map(withSearchRank);
 }
@@ -123,7 +115,13 @@ const toTitleSearchOutput = (result: TitleSearchResult): TitleSearchOutput => {
 
 async function searchHybrid(
   config: SearchDatabaseConfig & { searchLimit?: number },
-  options: { query: string; limit?: number; scope?: string; tags?: string[] },
+  options: {
+    query: string;
+    limit?: number;
+    scope?: string;
+    path?: string;
+    tags?: string[];
+  },
 ): Promise<HybridSearchOutput[]> {
   const finalLimit = options.limit ?? config.searchLimit ?? 5;
   const keywordLimit = Math.max(hybridBm25Limit, finalLimit);
@@ -135,6 +133,7 @@ async function searchHybrid(
         query: options.query,
         limit: keywordLimit,
         scope: options.scope,
+        path: options.path,
         tags: options.tags,
       }),
     ),
@@ -142,6 +141,7 @@ async function searchHybrid(
       query: options.query,
       limit: vectorLimit,
       scope: options.scope,
+      path: options.path,
       tags: options.tags,
     }),
     Promise.resolve(
@@ -149,6 +149,7 @@ async function searchHybrid(
         query: options.query,
         limit: titleLimit,
         scope: options.scope,
+        path: options.path,
         tags: options.tags,
       }),
     ),
@@ -162,45 +163,13 @@ async function searchHybrid(
   for (const result of titleResults)
     addHybridCandidate(candidates, result, "title");
 
-  return filterSearchResults(config, [...candidates.values()], options)
+  return [...candidates.values()]
     .sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
       return left.rank - right.rank;
     })
     .slice(0, finalLimit)
     .map((result, index) => ({ ...result, rank: index + 1 }));
-}
-
-function filterSearchResults<T extends SearchOutput>(
-  config: SearchDatabaseConfig,
-  results: T[],
-  options: { scope?: string; tags?: string[] },
-): T[] {
-  if (!hasSearchFilters(options)) {
-    return results;
-  }
-
-  return results.filter((result) => {
-    if (options.scope !== undefined && !result.path.startsWith(options.scope)) {
-      return false;
-    }
-
-    if (options.tags === undefined || options.tags.length === 0) {
-      return true;
-    }
-
-    return true;
-  });
-}
-
-function hasSearchFilters(options: {
-  scope?: string;
-  tags?: string[];
-}): boolean {
-  return (
-    options.scope !== undefined ||
-    (options.tags !== undefined && options.tags.length > 0)
-  );
 }
 
 function withSearchRank<T extends SearchOutput>(result: T, index: number): T {
