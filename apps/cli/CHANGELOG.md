@@ -1,5 +1,11 @@
 # @vaultgentic/cli
 
+## 0.0.7
+
+### Patch Changes
+
+- 49f4491: Use patch-compatible workspace ranges so Changesets does not release unchanged dependents for internal patch bumps.
+
 ## 0.0.6
 
 ### Patch Changes
