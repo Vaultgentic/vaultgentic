@@ -1,5 +1,11 @@
 # @vaultgentic/core
 
+## 0.0.3
+
+### Patch Changes
+
+- Release recent vault mutation, indexing, and MCP tool updates.
+
 ## 0.0.2
 
 ### Patch Changes
