@@ -1,5 +1,6 @@
 import { lstat, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
+import matter from "gray-matter";
 import { ConfigServiceError, resolveVaultRelativePath } from "./config.js";
 import type { SearchDatabaseConfig } from "./database.js";
 import { VaultgenticError } from "./errors.js";
@@ -37,7 +38,9 @@ export async function writeVaultNote(
     const absolutePath = path.join(config.vaultPath, relativePath);
 
     await ensureLeafSymlinkInsideVault(config.vaultPath, absolutePath);
-    const operation = (await noteExists(absolutePath)) ? "updated" : "created";
+    const existingMarkdown = await readExistingMarkdownIfPresent(absolutePath);
+    const operation = existingMarkdown === undefined ? "created" : "updated";
+    const markdown = formatMarkdown(options, existingMarkdown);
 
     await ensureNearestExistingParentInsideVault(
       config.vaultPath,
@@ -46,7 +49,7 @@ export async function writeVaultNote(
     await mkdir(path.dirname(absolutePath), { recursive: true });
     await ensureParentInsideVault(config.vaultPath, absolutePath);
     await ensureLeafSymlinkInsideVault(config.vaultPath, absolutePath);
-    await writeFile(absolutePath, formatMarkdown(options), "utf8");
+    await writeFile(absolutePath, markdown, "utf8");
 
     return {
       path: relativePath,
@@ -219,7 +222,9 @@ function resolveWritePath(vaultPath: string, target: string): string {
   }
 }
 
-async function noteExists(absolutePath: string): Promise<boolean> {
+async function readExistingMarkdownIfPresent(
+  absolutePath: string,
+): Promise<string | undefined> {
   const existing = await lstat(absolutePath).catch((error: unknown) => {
     if (isNotFoundError(error)) {
       return undefined;
@@ -229,22 +234,21 @@ async function noteExists(absolutePath: string): Promise<boolean> {
   });
 
   if (existing === undefined) {
-    return false;
+    return undefined;
   }
 
   if (!existing.isFile() && !existing.isSymbolicLink()) {
     throw new VaultWriteError("Write path already exists and is not a file");
   }
 
-  await readExistingMarkdownFile(absolutePath);
-  return true;
+  return readExistingMarkdownFile(absolutePath);
 }
 
-async function readExistingMarkdownFile(absolutePath: string): Promise<void> {
+async function readExistingMarkdownFile(absolutePath: string): Promise<string> {
   const content = await readFile(absolutePath);
 
   try {
-    new TextDecoder("utf-8", { fatal: true }).decode(content);
+    return new TextDecoder("utf-8", { fatal: true }).decode(content);
   } catch (error) {
     throw new VaultWriteError("Existing markdown file must be readable UTF-8", {
       cause: error,
@@ -252,45 +256,107 @@ async function readExistingMarkdownFile(absolutePath: string): Promise<void> {
   }
 }
 
-function formatMarkdown(options: WriteVaultNoteOptions): string {
+function formatMarkdown(
+  options: WriteVaultNoteOptions,
+  existingMarkdown: string | undefined,
+): string {
+  validateBody(options);
+
   if (options.frontmatter === undefined) {
+    if (existingMarkdown === undefined) {
+      return options.body;
+    }
+
+    const existingFrontmatterPrefix =
+      readExistingFrontmatterPrefix(existingMarkdown);
+    if (existingFrontmatterPrefix !== undefined) {
+      const separator = existingFrontmatterPrefix.endsWith("\n") ? "" : "\n";
+      return `${existingFrontmatterPrefix}${separator}${options.body}`;
+    }
+
     return options.body;
   }
 
-  const entries = Object.entries(options.frontmatter);
-  if (entries.length === 0) {
-    return `---\n---\n\n${options.body}`;
+  if (!isNonEmptyRecord(options.frontmatter)) {
+    return options.body;
   }
 
-  const frontmatter = entries
-    .map(([key, value]) => `${key}: ${formatFrontmatterValue(value)}`)
-    .join("\n");
-
-  return `---\n${frontmatter}\n---\n\n${options.body}`;
+  return formatWithFrontmatter(options.frontmatter, options.body);
 }
 
-function formatFrontmatterValue(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map(formatFrontmatterScalar).join(", ")}]`;
+function validateBody(options: WriteVaultNoteOptions): void {
+  if (options.body.startsWith("---")) {
+    throw new VaultWriteError("Write body must not start with frontmatter");
   }
 
-  return formatFrontmatterScalar(value);
+  if (options.body.trim() !== "" || isNonEmptyRecord(options.frontmatter)) {
+    return;
+  }
+
+  throw new VaultWriteError(
+    "Write body must not be empty unless frontmatter is provided",
+  );
 }
 
-function formatFrontmatterScalar(value: unknown): string {
-  if (typeof value === "string") {
-    return JSON.stringify(value);
+function readExistingFrontmatterPrefix(markdown: string): string | undefined {
+  const firstLineEnd = findLineEnd(markdown, 0);
+  const firstLine = markdown.slice(0, firstLineEnd).replace(/\r$/u, "");
+  if (firstLine !== "---") {
+    return undefined;
   }
 
-  if (
-    typeof value === "number" ||
-    typeof value === "boolean" ||
-    value === null
-  ) {
-    return String(value);
+  try {
+    matter(markdown);
+  } catch (error) {
+    throw new VaultWriteError("Existing frontmatter is malformed", {
+      cause: error,
+    });
   }
 
-  return JSON.stringify(value);
+  return findFrontmatterPrefix(markdown);
+}
+
+function findFrontmatterPrefix(markdown: string): string {
+  const firstLineEnd = findLineEnd(markdown, 0);
+  let lineStart = includeLineBreak(markdown, firstLineEnd);
+
+  while (lineStart < markdown.length) {
+    const lineEnd = findLineEnd(markdown, lineStart);
+    const line = markdown.slice(lineStart, lineEnd).replace(/\r$/u, "");
+
+    if (line === "---" || line === "...") {
+      return markdown.slice(0, includeLineBreak(markdown, lineEnd));
+    }
+
+    lineStart = includeLineBreak(markdown, lineEnd);
+  }
+
+  throw new VaultWriteError("Existing frontmatter is malformed");
+}
+
+function findLineEnd(text: string, start: number): number {
+  const lineEnd = text.indexOf("\n", start);
+  return lineEnd === -1 ? text.length : lineEnd;
+}
+
+function includeLineBreak(text: string, lineEnd: number): number {
+  return lineEnd < text.length ? lineEnd + 1 : lineEnd;
+}
+
+function formatWithFrontmatter(
+  frontmatter: Record<string, unknown>,
+  body: string,
+): string {
+  const formatted = matter.stringify("", frontmatter).replace(/\n\n$/u, "");
+  return `${formatted}\n${body}`;
+}
+
+function isNonEmptyRecord(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && Object.keys(value).length > 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNotFoundError(error: unknown): boolean {

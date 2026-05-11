@@ -59,8 +59,22 @@ describe("GIVEN a vault write service", () => {
         await expect(
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe(
-          '---\ntitle: "Alpha"\ntags: ["write", "core"]\n---\n\nBody text.',
+          "---\ntitle: Alpha\ntags:\n  - write\n  - core\n---\nBody text.",
         );
+      });
+
+      it("SHOULD clear frontmatter when an empty object is provided", async () => {
+        const config = await createFixture("empty-frontmatter-create");
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          frontmatter: {},
+          body: "Body text.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("Body text.");
       });
     });
   });
@@ -87,6 +101,145 @@ describe("GIVEN a vault write service", () => {
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe("Updated note.");
       });
+
+      it("SHOULD preserve existing frontmatter when frontmatter is omitted", async () => {
+        const config = await createFixture("preserve-frontmatter");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          '---\n# keep this comment\ntitle: "Alpha"\n---\nOld note.',
+        );
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          body: "Updated note.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe(
+          '---\n# keep this comment\ntitle: "Alpha"\n---\nUpdated note.',
+        );
+      });
+
+      it("SHOULD preserve existing empty frontmatter when frontmatter is omitted", async () => {
+        const config = await createFixture("preserve-empty-frontmatter");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\n---\nOld note.",
+        );
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          body: "Updated note.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("---\n---\nUpdated note.");
+      });
+
+      it("SHOULD update notes whose existing body starts with a thematic break", async () => {
+        const config = await createFixture("body-thematic-break");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "----\nOld note.",
+        );
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          body: "Updated note.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("Updated note.");
+      });
+
+      it("SHOULD replace existing frontmatter when provided", async () => {
+        const config = await createFixture("replace-frontmatter");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: Old\n---\nOld note.",
+        );
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          frontmatter: { title: "New" },
+          body: "Updated note.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("---\ntitle: New\n---\nUpdated note.");
+      });
+
+      it("SHOULD clear existing frontmatter when an empty object is provided", async () => {
+        const config = await createFixture("clear-frontmatter");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: Alpha\n---\nOld note.",
+        );
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          frontmatter: {},
+          body: "Updated note.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("Updated note.");
+      });
+
+      it("SHOULD preserve body text exactly", async () => {
+        const config = await createFixture("body-exact");
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          frontmatter: { title: "Alpha" },
+          body: "Line 1\r\nLine 2  \n",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("---\ntitle: Alpha\n---\nLine 1\r\nLine 2  \n");
+      });
+
+      it("SHOULD replace malformed existing frontmatter when provided", async () => {
+        const config = await createFixture("replace-malformed-frontmatter");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: [\n---\nOld note.",
+        );
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          frontmatter: { title: "New" },
+          body: "Updated note.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("---\ntitle: New\n---\nUpdated note.");
+      });
+
+      it("SHOULD clear malformed existing frontmatter when requested", async () => {
+        const config = await createFixture("clear-malformed-frontmatter");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: [\n---\nOld note.",
+        );
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          frontmatter: {},
+          body: "Updated note.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("Updated note.");
+      });
     });
   });
 
@@ -101,6 +254,59 @@ describe("GIVEN a vault write service", () => {
             body: "Nope.",
           }),
         ).rejects.toThrow(VaultWriteError);
+      });
+
+      it("SHOULD reject malformed existing frontmatter when preserving", async () => {
+        const config = await createFixture("preserve-malformed-frontmatter");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "---\ntitle: [\n---\nOld note.",
+        );
+
+        await expect(
+          writeVaultNote(config, {
+            path: "alpha.md",
+            body: "Updated note.",
+          }),
+        ).rejects.toThrow("Existing frontmatter is malformed");
+      });
+
+      it("SHOULD reject bodies that start with frontmatter delimiters", async () => {
+        const config = await createFixture("frontmatter-body");
+
+        await expect(
+          writeVaultNote(config, {
+            path: "alpha.md",
+            body: "---\nBody text.",
+          }),
+        ).rejects.toThrow("Write body must not start with frontmatter");
+      });
+
+      it("SHOULD reject empty bodies without non-empty frontmatter", async () => {
+        const config = await createFixture("empty-body");
+
+        await expect(
+          writeVaultNote(config, {
+            path: "alpha.md",
+            body: " \n\t",
+          }),
+        ).rejects.toThrow(
+          "Write body must not be empty unless frontmatter is provided",
+        );
+      });
+
+      it("SHOULD allow empty bodies with non-empty frontmatter", async () => {
+        const config = await createFixture("empty-body-frontmatter");
+
+        await writeVaultNote(config, {
+          path: "alpha.md",
+          frontmatter: { title: "Alpha" },
+          body: "",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("---\ntitle: Alpha\n---\n");
       });
 
       it("SHOULD reject absolute paths before resolving", async () => {
