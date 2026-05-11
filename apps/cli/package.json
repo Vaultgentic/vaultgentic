@@ -23,7 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@vaultgentic/core": "workspace:*",
+    "@vaultgentic/core": "workspace:~",
     "cli-table3": "^0.6.5",
     "commander": "^12.1.0",
     "ora": "^9.4.0",

@@ -36,7 +36,7 @@ importers:
   apps/cli:
     dependencies:
       '@vaultgentic/core':
-        specifier: workspace:*
+        specifier: workspace:~
         version: link:../../packages/core
       cli-table3:
         specifier: ^0.6.5
@@ -57,7 +57,7 @@ importers:
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
       '@vaultgentic/core':
-        specifier: workspace:*
+        specifier: workspace:~
         version: link:../../packages/core
       zod:
         specifier: ^4.4.3

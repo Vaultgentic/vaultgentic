@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@vaultgentic/core": "workspace:*",
+    "@vaultgentic/core": "workspace:~",
     "zod": "^4.4.3"
   }
 }
