@@ -32,10 +32,11 @@ export async function writeVaultNote(
   options: WriteVaultNoteOptions,
 ): Promise<WriteVaultNoteResult> {
   try {
+    validateRawWritePath(options.path);
     const relativePath = resolveWritePath(config.vaultPath, options.path);
     const absolutePath = path.join(config.vaultPath, relativePath);
 
-    await ensureLeafIsNotSymlink(absolutePath);
+    await ensureLeafSymlinkInsideVault(config.vaultPath, absolutePath);
     const operation = (await noteExists(absolutePath)) ? "updated" : "created";
 
     await ensureNearestExistingParentInsideVault(
@@ -44,7 +45,7 @@ export async function writeVaultNote(
     );
     await mkdir(path.dirname(absolutePath), { recursive: true });
     await ensureParentInsideVault(config.vaultPath, absolutePath);
-    await ensureLeafIsNotSymlink(absolutePath);
+    await ensureLeafSymlinkInsideVault(config.vaultPath, absolutePath);
     await writeFile(absolutePath, formatMarkdown(options), "utf8");
 
     return {
@@ -63,6 +64,57 @@ export async function writeVaultNote(
       { cause: error },
     );
   }
+}
+
+function validateRawWritePath(target: string): void {
+  if (typeof target !== "string" || target.trim() === "") {
+    throw new VaultWriteError("Write path must be a non-empty string");
+  }
+
+  if (target.includes("\\")) {
+    throw new VaultWriteError("Write path must use forward slashes");
+  }
+
+  if (path.posix.isAbsolute(target) || path.win32.isAbsolute(target)) {
+    throw new VaultWriteError("Write path must be vault-relative");
+  }
+
+  if (hasControlCharacter(target)) {
+    throw new VaultWriteError("Write path must not contain control characters");
+  }
+
+  if (/[<>:"|?*]/u.test(target)) {
+    throw new VaultWriteError(
+      "Write path must not contain Windows-reserved characters",
+    );
+  }
+
+  if (!target.endsWith(".md")) {
+    throw new VaultWriteError("Write path must end with lowercase .md");
+  }
+
+  for (const segment of target.split("/")) {
+    if (segment === "" || segment === "." || segment === "..") {
+      throw new VaultWriteError(
+        "Write path must not contain traversal segments",
+      );
+    }
+
+    if (segment.startsWith(".")) {
+      throw new VaultWriteError("Write path must not contain hidden segments");
+    }
+  }
+}
+
+function hasControlCharacter(target: string): boolean {
+  for (const character of target) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 async function ensureNearestExistingParentInsideVault(
@@ -124,7 +176,10 @@ async function ensurePathInsideVault(
   }
 }
 
-async function ensureLeafIsNotSymlink(absolutePath: string): Promise<void> {
+async function ensureLeafSymlinkInsideVault(
+  vaultPath: string,
+  absolutePath: string,
+): Promise<void> {
   const existing = await lstat(absolutePath).catch((error: unknown) => {
     if (isNotFoundError(error)) {
       return undefined;
@@ -134,7 +189,7 @@ async function ensureLeafIsNotSymlink(absolutePath: string): Promise<void> {
   });
 
   if (existing?.isSymbolicLink() === true) {
-    throw new VaultWriteError("Write path must not be a symlink");
+    await ensurePathInsideVault(vaultPath, absolutePath);
   }
 }
 
@@ -177,16 +232,24 @@ async function noteExists(absolutePath: string): Promise<boolean> {
     return false;
   }
 
-  if (existing.isSymbolicLink()) {
-    throw new VaultWriteError("Write path must not be a symlink");
-  }
-
-  if (!existing.isFile()) {
+  if (!existing.isFile() && !existing.isSymbolicLink()) {
     throw new VaultWriteError("Write path already exists and is not a file");
   }
 
-  await readFile(absolutePath, "utf8");
+  await readExistingMarkdownFile(absolutePath);
   return true;
+}
+
+async function readExistingMarkdownFile(absolutePath: string): Promise<void> {
+  const content = await readFile(absolutePath);
+
+  try {
+    new TextDecoder("utf-8", { fatal: true }).decode(content);
+  } catch (error) {
+    throw new VaultWriteError("Existing markdown file must be readable UTF-8", {
+      cause: error,
+    });
+  }
 }
 
 function formatMarkdown(options: WriteVaultNoteOptions): string {

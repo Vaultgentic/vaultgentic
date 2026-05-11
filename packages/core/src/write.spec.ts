@@ -103,6 +103,74 @@ describe("GIVEN a vault write service", () => {
         ).rejects.toThrow(VaultWriteError);
       });
 
+      it("SHOULD reject absolute paths before resolving", async () => {
+        const config = await createFixture("absolute-path");
+
+        await expect(
+          writeVaultNote(config, {
+            path: path.join(config.vaultPath, "alpha.md"),
+            body: "Nope.",
+          }),
+        ).rejects.toThrow("Write path must be vault-relative");
+      });
+
+      it("SHOULD reject backslashes before resolving", async () => {
+        const config = await createFixture("backslash-path");
+
+        await expect(
+          writeVaultNote(config, {
+            path: "notes\\alpha.md",
+            body: "Nope.",
+          }),
+        ).rejects.toThrow("Write path must use forward slashes");
+      });
+
+      it("SHOULD reject non-lowercase markdown extensions", async () => {
+        const config = await createFixture("uppercase-extension");
+
+        await expect(
+          writeVaultNote(config, {
+            path: "alpha.MD",
+            body: "Nope.",
+          }),
+        ).rejects.toThrow("Write path must end with lowercase .md");
+      });
+
+      it("SHOULD reject hidden files and folders", async () => {
+        const config = await createFixture("hidden-segments");
+
+        await expect(
+          writeVaultNote(config, {
+            path: "notes/.alpha.md",
+            body: "Nope.",
+          }),
+        ).rejects.toThrow("Write path must not contain hidden segments");
+      });
+
+      it("SHOULD reject control characters", async () => {
+        const config = await createFixture("control-character");
+
+        await expect(
+          writeVaultNote(config, {
+            path: "notes/alpha\u0000.md",
+            body: "Nope.",
+          }),
+        ).rejects.toThrow("Write path must not contain control characters");
+      });
+
+      it("SHOULD reject Windows-reserved characters", async () => {
+        const config = await createFixture("windows-reserved");
+
+        await expect(
+          writeVaultNote(config, {
+            path: "notes/al:pha.md",
+            body: "Nope.",
+          }),
+        ).rejects.toThrow(
+          "Write path must not contain Windows-reserved characters",
+        );
+      });
+
       it("SHOULD reject non-markdown paths", async () => {
         const config = await createFixture("non-markdown");
 
@@ -111,7 +179,48 @@ describe("GIVEN a vault write service", () => {
             path: "alpha.txt",
             body: "Nope.",
           }),
-        ).rejects.toThrow("Write path must end with .md");
+        ).rejects.toThrow("Write path must end with lowercase .md");
+      });
+
+      it("SHOULD reject existing directory targets", async () => {
+        const config = await createFixture("directory-target");
+        await mkdir(path.join(config.vaultPath, "alpha.md"));
+
+        await expect(
+          writeVaultNote(config, {
+            path: "alpha.md",
+            body: "Nope.",
+          }),
+        ).rejects.toThrow("Write path already exists and is not a file");
+      });
+
+      it("SHOULD reject existing non-UTF-8 markdown files", async () => {
+        const config = await createFixture("non-utf8");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          Uint8Array.from([0xff, 0xfe]),
+        );
+
+        await expect(
+          writeVaultNote(config, {
+            path: "alpha.md",
+            body: "Nope.",
+          }),
+        ).rejects.toThrow("Existing markdown file must be readable UTF-8");
+      });
+
+      it("SHOULD reject invalid paths before creating parent folders", async () => {
+        const config = await createFixture("no-parent-mutation");
+
+        await expect(
+          writeVaultNote(config, {
+            path: ".hidden/alpha.md",
+            body: "Nope.",
+          }),
+        ).rejects.toThrow("Write path must not contain hidden segments");
+        await expect(
+          readFile(path.join(config.vaultPath, ".hidden/alpha.md"), "utf8"),
+        ).rejects.toThrow();
       });
 
       it("SHOULD reject parent symlinks that escape the vault", async () => {
@@ -131,7 +240,7 @@ describe("GIVEN a vault write service", () => {
         ).rejects.toThrow("Write path parent must stay inside the vault");
       });
 
-      it("SHOULD reject note symlinks before writing", async () => {
+      it("SHOULD reject note symlinks that escape the vault", async () => {
         const config = await createFixture("symlink-note");
         const outsidePath = path.join(
           path.dirname(config.vaultPath),
@@ -145,10 +254,28 @@ describe("GIVEN a vault write service", () => {
             path: "alpha.md",
             body: "Nope.",
           }),
-        ).rejects.toThrow("Write path must not be a symlink");
+        ).rejects.toThrow("Write path parent must stay inside the vault");
         await expect(readFile(outsidePath, "utf8")).resolves.toBe(
           "Outside note.",
         );
+      });
+
+      it("SHOULD allow symlinks that resolve inside the vault", async () => {
+        const config = await createFixture("symlink-inside");
+        await mkdir(path.join(config.vaultPath, "actual"));
+        await symlink(
+          path.join(config.vaultPath, "actual"),
+          path.join(config.vaultPath, "linked"),
+        );
+
+        await writeVaultNote(config, {
+          path: "linked/alpha.md",
+          body: "Inside symlink note.",
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "actual/alpha.md"), "utf8"),
+        ).resolves.toBe("Inside symlink note.");
       });
     });
   });
