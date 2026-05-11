@@ -28,15 +28,15 @@ jobs:
         with:
           node-version: lts/*
           cache: pnpm
-          registry-url: https://npm.pkg.github.com
+          registry-url: https://registry.npmjs.org
           scope: "@vaultgentic"
       - run: pnpm install --frozen-lockfile
-      - name: Configure GitHub Packages auth
+      - name: Configure npm publishing auth
         run: |
-          pnpm config set @vaultgentic:registry https://npm.pkg.github.com
-          pnpm config set //npm.pkg.github.com/:_authToken "$NODE_AUTH_TOKEN"
+          pnpm config set @vaultgentic:registry https://registry.npmjs.org
+          pnpm config set //registry.npmjs.org/:_authToken "$NODE_AUTH_TOKEN"
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - uses: changesets/action@v1
         with:
           version: pnpm version-packages
@@ -45,4 +45,4 @@ jobs:
           commit: Version packages
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
