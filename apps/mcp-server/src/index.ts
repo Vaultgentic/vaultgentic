@@ -3,6 +3,7 @@ import {
   initializeSearchDatabase,
   readVaultTarget,
   searchVault,
+  writeVaultNote,
 } from "@vaultgentic/core";
 import type {
   DatabaseStatus,
@@ -28,6 +29,12 @@ import {
   type ReadToolInput,
   type ReadToolResponse,
 } from "./tools/read.js";
+import {
+  createWriteToolHandler,
+  writeToolInputSchema,
+  type WriteToolInput,
+  type WriteToolResponse,
+} from "./tools/write.js";
 import { createMcpIndexRefreshCoordinator } from "./refresh.js";
 import {
   createSearchToolHandler,
@@ -44,6 +51,7 @@ export {
   readToolInputSchema,
   searchToolInputSchema,
   sharedCorePackageName,
+  writeToolInputSchema,
 };
 
 type VaultgenticMcpServer = {
@@ -54,6 +62,7 @@ type VaultgenticMcpServer = {
   server: McpServer;
   search: (input: SearchToolInput) => Promise<SearchToolResponse>;
   toolNames: string[];
+  write: (input: WriteToolInput) => Promise<WriteToolResponse>;
 };
 
 type CreateVaultgenticMcpServerOptions = {
@@ -66,6 +75,7 @@ type CreateVaultgenticMcpServerOptions = {
   read?: typeof readVaultTarget;
   refreshThrottleMs?: number;
   search?: typeof searchVault;
+  write?: typeof writeVaultNote;
 };
 
 const require = createRequire(import.meta.url);
@@ -113,6 +123,10 @@ export async function createVaultgenticMcpServer(
     ensureIndexFresh: refreshCoordinator.ensureIndexFresh,
     read: options.read ?? readVaultTarget,
   });
+  const write = createWriteToolHandler({
+    config,
+    write: options.write ?? writeVaultNote,
+  });
 
   server.tool(
     "vaultgentic_search",
@@ -126,6 +140,12 @@ export async function createVaultgenticMcpServer(
     readToolInputSchema.shape,
     async (input) => toMcpToolResult(read(input)),
   );
+  server.tool(
+    "vaultgentic_write",
+    "Create or update an Obsidian-compatible markdown note.",
+    writeToolInputSchema.shape,
+    async (input) => toMcpToolResult(write(input)),
+  );
 
   return {
     config,
@@ -134,7 +154,8 @@ export async function createVaultgenticMcpServer(
     read,
     search,
     server,
-    toolNames: ["vaultgentic_search", "vaultgentic_read"],
+    toolNames: ["vaultgentic_search", "vaultgentic_read", "vaultgentic_write"],
+    write,
   };
 }
 

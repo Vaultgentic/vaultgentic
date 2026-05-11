@@ -42,6 +42,7 @@ export const mcpToolPrefix = "vaultgentic_";
 export const plannedMcpToolNames = [
   "vaultgentic_search",
   "vaultgentic_read",
+  "vaultgentic_write",
 ] as const;
 export const forbiddenMcpToolNameParts = [
   "sync",
@@ -157,9 +158,14 @@ function classifyError(message: string): string {
   if (
     normalizedMessage.includes("outside the vault") ||
     normalizedMessage.includes("inside the vault") ||
-    normalizedMessage.includes("invalid read path")
+    normalizedMessage.includes("invalid read path") ||
+    normalizedMessage.includes("write path")
   ) {
     return "path_rejected";
+  }
+
+  if (normalizedMessage.includes("write body")) {
+    return "invalid_tool_input";
   }
 
   if (normalizedMessage.includes("read target")) {

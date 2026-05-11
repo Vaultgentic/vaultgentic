@@ -8,6 +8,8 @@ import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
 import type {
   ReadVaultTargetOptions,
   ReadVaultTargetResult,
+  WriteVaultNoteOptions,
+  WriteVaultNoteResult,
 } from "@vaultgentic/core";
 import { VaultReadError } from "@vaultgentic/core";
 import { describe, expect, it } from "vitest";
@@ -22,6 +24,7 @@ import {
   readToolInputSchema,
   searchToolInputSchema,
   sharedCorePackageName,
+  writeToolInputSchema,
 } from "./index.js";
 
 describe("GIVEN the MCP server skeleton", () => {
@@ -77,10 +80,11 @@ describe("GIVEN the MCP server skeleton", () => {
         expect(mcpServer.databaseStatus.noteCount).toBe(1);
       });
 
-      it("SHOULD reserve only vaultgentic-prefixed search and read tool names", () => {
+      it("SHOULD reserve only vaultgentic-prefixed search read and write tool names", () => {
         expect(plannedMcpToolNames).toEqual([
           "vaultgentic_search",
           "vaultgentic_read",
+          "vaultgentic_write",
         ]);
         expect(
           plannedMcpToolNames.every((name) => name.startsWith(mcpToolPrefix)),
@@ -94,6 +98,10 @@ describe("GIVEN the MCP server skeleton", () => {
         ).toBe(true);
         expect(
           readToolInputSchema.safeParse({ target: "note.md" }).success,
+        ).toBe(true);
+        expect(
+          writeToolInputSchema.safeParse({ path: "note.md", body: "Body" })
+            .success,
         ).toBe(true);
       });
 
@@ -116,6 +124,7 @@ describe("GIVEN the MCP server skeleton", () => {
         expect(mcpServer.toolNames).toEqual([
           "vaultgentic_search",
           "vaultgentic_read",
+          "vaultgentic_write",
         ]);
         for (const forbiddenNamePart of forbiddenMcpToolNameParts) {
           expect(
@@ -495,6 +504,84 @@ describe("GIVEN the MCP server skeleton", () => {
     });
   });
 
+  describe("WHEN MCP callers write to the vault", () => {
+    describe("THEN vaultgentic_write uses the shared write service", () => {
+      it("SHOULD write notes with metadata only responses", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const writes: WriteVaultNoteOptions[] = [];
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          write: async (_config, options) => {
+            writes.push(options);
+            return createWriteResult({
+              path: options.path,
+              operation: "created",
+              indexed: true,
+            });
+          },
+        });
+
+        const response = await mcpServer.write({
+          path: "notes/alpha.md",
+          body: "# Alpha",
+          tags: ["project"],
+          aliases: ["Alpha note"],
+        });
+
+        expect(writes).toEqual([
+          {
+            path: "notes/alpha.md",
+            body: "# Alpha",
+            frontmatter: {
+              tags: ["project"],
+              aliases: ["Alpha note"],
+            },
+          },
+        ]);
+        expect(response).toEqual({
+          result: {
+            path: "notes/alpha.md",
+            operation: "created",
+            indexed: true,
+          },
+        });
+        expect(JSON.stringify(response)).not.toContain("# Alpha");
+      });
+
+      it("SHOULD reject invalid write tool input", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({ configPath });
+
+        await expect(
+          mcpServer.write({
+            path: "alpha.md",
+            body: "# Alpha",
+            tags: ["project", ""],
+          }),
+        ).rejects.toMatchObject({
+          code: "invalid_tool_input",
+          expected: true,
+        });
+      });
+    });
+  });
+
   describe("WHEN MCP callers invoke registered tools", () => {
     describe("THEN registered callbacks return MCP-shaped results", () => {
       it("SHOULD return known search hits through vaultgentic_search", async () => {
@@ -632,6 +719,41 @@ describe("GIVEN the MCP server skeleton", () => {
         });
         expect(JSON.stringify(result)).not.toContain(vaultPath);
       });
+
+      it("SHOULD return write metadata through vaultgentic_write", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          write: async () =>
+            createWriteResult({
+              path: "alpha.md",
+              operation: "updated",
+              indexed: true,
+            }),
+        });
+
+        const result = await callRegisteredTool(
+          mcpServer.server,
+          "vaultgentic_write",
+          {
+            path: "alpha.md",
+            body: "# Registered",
+          },
+        );
+
+        expect(readToolJson(result)).toEqual({
+          result: { path: "alpha.md", operation: "updated", indexed: true },
+        });
+        expect(result.isError).toBeUndefined();
+      });
     });
   });
 });
@@ -749,5 +871,17 @@ function createChunkReadResult(options: {
       links: [],
       indexedAt: Date.now(),
     },
+  };
+}
+
+function createWriteResult(options: {
+  path: string;
+  operation: WriteVaultNoteResult["operation"];
+  indexed: boolean;
+}): WriteVaultNoteResult {
+  return {
+    path: options.path,
+    operation: options.operation,
+    indexed: options.indexed,
   };
 }
