@@ -285,6 +285,8 @@ describe("GIVEN the MCP server skeleton", () => {
           query: string;
           mode?: string;
           limit?: number;
+          scope?: string;
+          tags?: string[];
         }> = [];
         const mcpServer = await createVaultgenticMcpServer({
           configPath,
@@ -299,8 +301,7 @@ describe("GIVEN the MCP server skeleton", () => {
           query: "semantic idea",
           mode: "semantic",
           limit: 3,
-          scope: "notes/",
-          tags: ["project"],
+          filter: { kind: "scope", scope: "notes/", tags: ["project"] },
           includeScores: true,
         });
 
@@ -325,7 +326,10 @@ describe("GIVEN the MCP server skeleton", () => {
         expect(
           searchToolInputSchema.safeParse({
             query: "local search",
-            tags: Array.from({ length: 21 }, (_, index) => `tag-${index}`),
+            filter: {
+              kind: "tags",
+              tags: Array.from({ length: 21 }, (_, index) => `tag-${index}`),
+            },
           }).success,
         ).toBe(false);
       });
@@ -919,19 +923,40 @@ describe("GIVEN the MCP server skeleton", () => {
 
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
-        ).toContain("Omit scope, path, and tags for unscoped searches");
+        ).toContain("Omit filter for unscoped search");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
+        ).toContain("filter.kind='scope'");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
+        ).toContain("filter.kind='path'");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
+        ).toContain("Never pass empty strings");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
+        ).toContain("try title mode once");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_read"),
-        ).toContain("Read before patching or overwriting");
+        ).toContain("vault-relative .md path or an indexed numeric chunk id");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_read"),
+        ).toContain("includeMetadata=true");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_write"),
-        ).toContain("whole-note write");
+        ).toContain("whole-note replacement");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_write"),
+        ).toContain("body excludes frontmatter");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
-        ).toContain("Read the note first");
+        ).toContain("strict unified diff");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
+        ).toContain("pass expectedFileHash");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_remove"),
-        ).toContain("Read first and pass the file hash");
+        ).toContain("pass expectedFileHash");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_remove"),
         ).toContain("Configured to archive removed notes under");

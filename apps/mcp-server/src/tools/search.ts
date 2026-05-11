@@ -59,6 +59,35 @@ const searchQuerySchema = z
       .max(1_000),
   );
 
+const searchTagsSchema = z.array(z.string().trim().min(1).max(100)).max(20);
+
+const searchFilterSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("scope"),
+        scope: z.string().trim().min(1).max(500),
+        tags: searchTagsSchema.optional(),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("path"),
+        path: z.string().trim().min(1).max(500),
+        tags: searchTagsSchema.optional(),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("tags"),
+        tags: searchTagsSchema.min(1),
+      })
+      .strict(),
+  ])
+  .describe(
+    "Optional search filter. Omit for unscoped search. Use kind=scope for a directory prefix, kind=path for one exact note path, or kind=tags for frontmatter tags only.",
+  );
+
 export const searchToolInputSchema = z
   .object({
     query: searchQuerySchema.describe("Search query text."),
@@ -75,29 +104,7 @@ export const searchToolInputSchema = z
       .max(100)
       .optional()
       .describe("Maximum number of results to return (1-100)."),
-    scope: z
-      .string()
-      .trim()
-      .min(1)
-      .max(500)
-      .optional()
-      .describe(
-        "Restrict results to notes under this directory prefix. Mutually exclusive with path — omit both for unscoped searches.",
-      ),
-    path: z
-      .string()
-      .trim()
-      .min(1)
-      .max(500)
-      .optional()
-      .describe(
-        "Restrict results to an exact note path. Mutually exclusive with scope — omit both for unscoped searches.",
-      ),
-    tags: z
-      .array(z.string().trim().min(1).max(100))
-      .max(20)
-      .optional()
-      .describe("Filter results to notes with all of these frontmatter tags."),
+    filter: searchFilterSchema.optional(),
     includeScores: z
       .boolean()
       .optional()
@@ -105,9 +112,7 @@ export const searchToolInputSchema = z
         "Include score and componentScores in results. Hybrid scores use reciprocal-rank fusion (~0.01-0.025) and are not comparable to keyword BM25 or title scores.",
       ),
   })
-  .refine((input) => !(input.scope !== undefined && input.path !== undefined), {
-    message: "scope and path are mutually exclusive — use one or the other",
-  });
+  .strict();
 
 export function createSearchToolHandler(options: {
   config: McpServerConfig;
@@ -118,21 +123,20 @@ export function createSearchToolHandler(options: {
   return async (input) => {
     try {
       const parsedInput = searchToolInputSchema.parse(input);
+      const filters = toCoreSearchFilters(parsedInput.filter);
       const refreshResult = await options.ensureIndexFresh();
       const results = await options.search(options.config, {
         query: parsedInput.query,
         limit: parsedInput.limit,
         mode: parsedInput.mode,
-        scope: parsedInput.scope,
-        path: parsedInput.path,
-        tags: parsedInput.tags,
+        ...filters,
       });
 
       const filterDiagnostics =
-        results.length === 0 && hasSearchFilters(parsedInput)
+        results.length === 0 && hasSearchFilters(filters)
           ? (options.readFilterDiagnostics ?? readSearchFilterDiagnostics)(
               options.config,
-              parsedInput,
+              filters,
             )
           : undefined;
 
@@ -161,7 +165,29 @@ export function createSearchToolHandler(options: {
   };
 }
 
-function hasSearchFilters(input: SearchToolInput): boolean {
+function toCoreSearchFilters(filter: SearchToolInput["filter"]): {
+  scope?: string;
+  path?: string;
+  tags?: string[];
+} {
+  if (filter === undefined) return {};
+
+  if (filter.kind === "scope") {
+    return { scope: filter.scope, tags: filter.tags };
+  }
+
+  if (filter.kind === "path") {
+    return { path: filter.path, tags: filter.tags };
+  }
+
+  return { tags: filter.tags };
+}
+
+function hasSearchFilters(input: {
+  scope?: string;
+  path?: string;
+  tags?: string[];
+}): boolean {
   return (
     input.scope !== undefined ||
     input.path !== undefined ||

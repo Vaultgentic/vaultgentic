@@ -107,16 +107,16 @@ export const mcpServerPackageName = "vaultgentic-mcp-server";
 export const packageVersion = packageJson.version;
 
 const searchToolDescription =
-  "Search indexed vault notes by query. Omit scope, path, and tags for unscoped searches.";
+  "Search indexed vault notes. Requires query. Default mode is hybrid; title matches note titles, paths, and aliases. Omit filter for unscoped search. Use filter.kind='scope' with scope for a directory prefix, filter.kind='path' with path for one exact note path, or filter.kind='tags' with tags for frontmatter tags only. Never pass empty strings. For note-name lookup, try title mode once; if no result, broaden to hybrid or keyword. Returns compact JSON with paths, titles, ranks, snippets, warnings, index status, and refresh summary.";
 
 const readToolDescription =
-  "Read a vault note by path or an indexed chunk by id. Read before patching or overwriting to obtain the file hash for concurrency safety.";
+  "Read a vault note by vault-relative .md path or an indexed numeric chunk id. Read before patching removing or overwriting when you need current content or a file hash. Set includeMetadata=true on note reads to return metadata and fileHash. includeNoteContext only affects chunk reads. maxChars truncates returned content safely.";
 
 const writeToolDescription =
-  "Create or replace a vault note. This is a whole-note write — read first when preserving existing content matters.";
+  "Create or replace a vault note at a vault-relative .md path. This is a whole-note replacement; read first when preserving existing content frontmatter or links matters. body excludes frontmatter; optional frontmatter tags and aliases are serialized into the note. Returns metadata only and does not echo note content.";
 
 const patchToolDescription =
-  "Apply a strict unified diff to an existing vault note. Read the note first to generate the diff and obtain the file hash. Retry from fresh content on hash mismatch.";
+  "Apply a strict unified diff to an existing vault note. Read the note first to get exact content and fileHash, then pass expectedFileHash for concurrency safety. On hash mismatch re-read and regenerate the patch from fresh content. Returns metadata only and does not echo patch or note content.";
 
 function createRemoveToolDescription(
   config: Awaited<ReturnType<typeof loadMcpServerConfig>>,
@@ -126,7 +126,7 @@ function createRemoveToolDescription(
     ? `Configured to archive removed notes under ${config.archiveFolder ?? defaultArchiveFolder}.`
     : "Configured to permanently delete removed notes.";
 
-  return `Remove a vault note. Read first and pass the file hash to prevent stale concurrent deletion. ${removeBehavior}`;
+  return `Remove a vault note by vault-relative .md path. Read first and pass expectedFileHash to prevent stale concurrent deletion. ${removeBehavior} Returns metadata only and does not echo note content.`;
 }
 
 export function isMainModule(
@@ -181,10 +181,12 @@ export async function createVaultgenticMcpServer(
     remove: options.remove ?? removeVaultNote,
   });
 
-  server.tool(
+  server.registerTool(
     "vaultgentic_search",
-    searchToolDescription,
-    searchToolInputSchema.shape,
+    {
+      description: searchToolDescription,
+      inputSchema: searchToolInputSchema,
+    },
     async (input) => toMcpToolResult(search(input)),
   );
   server.tool(

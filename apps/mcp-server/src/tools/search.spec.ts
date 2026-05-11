@@ -36,6 +36,78 @@ describe("GIVEN the MCP search tool", () => {
         expect(response.results[0]).not.toHaveProperty("score");
       });
 
+      it("SHOULD translate scope filters for shared search", async () => {
+        const searched: unknown[] = [];
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async (_config, options) => {
+            searched.push(options);
+            return [createSearchResult(0.5)];
+          },
+        });
+
+        await search({
+          query: "alpha",
+          filter: { kind: "scope", scope: "projects/", tags: ["project"] },
+        });
+
+        expect(searched).toEqual([
+          {
+            query: "alpha",
+            mode: "hybrid",
+            scope: "projects/",
+            tags: ["project"],
+          },
+        ]);
+      });
+
+      it("SHOULD translate path filters for shared search", async () => {
+        const searched: unknown[] = [];
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async (_config, options) => {
+            searched.push(options);
+            return [createSearchResult(0.5)];
+          },
+        });
+
+        await search({
+          query: "alpha",
+          filter: { kind: "path", path: "projects/alpha.md" },
+        });
+
+        expect(searched).toEqual([
+          {
+            query: "alpha",
+            mode: "hybrid",
+            path: "projects/alpha.md",
+          },
+        ]);
+      });
+
+      it("SHOULD translate tag-only filters for shared search", async () => {
+        const searched: unknown[] = [];
+        const search = createSearchToolHandler({
+          config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
+          ensureIndexFresh: async () => createRefreshResult(1),
+          search: async (_config, options) => {
+            searched.push(options);
+            return [createSearchResult(0.5)];
+          },
+        });
+
+        await search({
+          query: "alpha",
+          filter: { kind: "tags", tags: ["project"] },
+        });
+
+        expect(searched).toEqual([
+          { query: "alpha", mode: "hybrid", tags: ["project"] },
+        ]);
+      });
+
       it("SHOULD mark cached index summaries", async () => {
         const search = createSearchToolHandler({
           config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
@@ -186,8 +258,7 @@ describe("GIVEN the MCP search tool", () => {
 
         const response = await search({
           query: "sharedneedle",
-          scope: "missing/",
-          tags: ["absent"],
+          filter: { kind: "scope", scope: "missing/", tags: ["absent"] },
         });
 
         expect(response.filterDiagnostics).toEqual({
@@ -207,6 +278,42 @@ describe("GIVEN the MCP search tool", () => {
       it("SHOULD reject oversized search inputs", () => {
         expect(
           searchToolInputSchema.safeParse({ query: "x".repeat(1_001) }).success,
+        ).toBe(false);
+      });
+
+      it("SHOULD reject legacy top-level filter fields", () => {
+        expect(
+          searchToolInputSchema.safeParse({
+            query: "alpha",
+            scope: "projects/",
+          }).success,
+        ).toBe(false);
+        expect(
+          searchToolInputSchema.safeParse({
+            query: "alpha",
+            path: "projects/alpha.md",
+          }).success,
+        ).toBe(false);
+        expect(
+          searchToolInputSchema.safeParse({
+            query: "alpha",
+            tags: ["project"],
+          }).success,
+        ).toBe(false);
+      });
+
+      it("SHOULD reject empty filter strings", () => {
+        expect(
+          searchToolInputSchema.safeParse({
+            query: "alpha",
+            filter: { kind: "scope", scope: "" },
+          }).success,
+        ).toBe(false);
+        expect(
+          searchToolInputSchema.safeParse({
+            query: "alpha",
+            filter: { kind: "path", path: "" },
+          }).success,
         ).toBe(false);
       });
 

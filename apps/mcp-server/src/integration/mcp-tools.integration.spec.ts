@@ -34,10 +34,11 @@ type SearchToolJson = {
     score?: number;
   }>;
   filterDiagnostics?: {
-    appliedFilters: { scope?: string; tags: string[] };
+    appliedFilters: { scope?: string; path?: string; tags: string[] };
     matchedNoteCounts: {
       allFilters: number;
       scope?: number;
+      path?: number;
       tags: Record<string, number>;
     };
     warnings: string[];
@@ -161,8 +162,7 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
           const firstSearch = await fixture.callTool("vaultgentic_search", {
             query: "alpha-workflow-needle",
             mode: "keyword",
-            tags: ["project"],
-            scope: "projects/",
+            filter: { kind: "scope", scope: "projects/", tags: ["project"] },
           });
 
           expect(readToolJson<SearchToolJson>(firstSearch).results).toEqual([
@@ -290,8 +290,11 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
             await fixture.callTool("vaultgentic_search", {
               query: "shared-filter-needle",
               mode: "keyword",
-              scope: "projects/",
-              tags: ["project"],
+              filter: {
+                kind: "scope",
+                scope: "projects/",
+                tags: ["project"],
+              },
             }),
           );
 
@@ -352,8 +355,7 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
             await fixture.callTool("vaultgentic_search", {
               query: "diagnostic-needle",
               mode: "keyword",
-              scope: "missing/",
-              tags: ["absent"],
+              filter: { kind: "scope", scope: "missing/", tags: ["absent"] },
             }),
           );
 
@@ -382,9 +384,13 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
             { query: "   " },
             { query: "valid", mode: "invalid" },
             { query: "valid", limit: 0 },
+            { query: "valid", scope: "projects/" },
             {
               query: "valid",
-              tags: Array.from({ length: 21 }, (_, index) => `tag-${index}`),
+              filter: {
+                kind: "tags",
+                tags: Array.from({ length: 21 }, (_, index) => `tag-${index}`),
+              },
             },
           ];
 
@@ -619,7 +625,7 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
             await fixture.callTool("vaultgentic_search", {
               query: "write-update-needle",
               mode: "keyword",
-              tags: ["write-test"],
+              filter: { kind: "tags", tags: ["write-test"] },
             }),
           );
 
