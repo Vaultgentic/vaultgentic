@@ -107,16 +107,16 @@ export const mcpServerPackageName = "vaultgentic-mcp-server";
 export const packageVersion = packageJson.version;
 
 const searchToolDescription =
-  "Search indexed vault notes. Requires a non-empty query. Optional mode is one of hybrid (default), semantic, keyword, or title — title mode matches note titles, paths, and aliases. Use path to restrict results to an exact note path, scope to restrict by directory prefix, tags to filter frontmatter tags, limit 1-100, and includeScores only when ranking details are needed. Hybrid scores use reciprocal-rank fusion (small values, ~0.01-0.025) and are not directly comparable to keyword BM25 scores or title scores; use includeScores with componentScores to compare within a mode. Returns compact JSON with results containing path, title, rank, optional chunk/snippet/heading data, confidence warnings, score metadata when requested, index status, and refresh summary.";
+  "Search indexed vault notes by query. Omit scope, path, and tags for unscoped searches.";
 
 const readToolDescription =
-  "Read a vault note by relative path or an indexed chunk by id. Use before patching or overwriting when you need the current content, metadata, or file hash for concurrency checks. Optional maxChars is capped at 200000, includeMetadata adds note metadata such as hash, and includeNoteContext adds surrounding note context for chunk reads. Returns JSON with the requested content plus index status and refresh summary.";
+  "Read a vault note by path or an indexed chunk by id. Read before patching or overwriting to obtain the file hash for concurrency safety.";
 
 const writeToolDescription =
-  "Create or replace an Obsidian-compatible markdown note at a vault-relative path. Requires path and body; optional frontmatter, tags, and aliases are validated and serialized into frontmatter. This is a whole-note write, so read first when preserving existing content matters. The response is metadata-only JSON with path, operation, and indexing status; it does not echo the note body.";
+  "Create or replace a vault note. This is a whole-note write — read first when preserving existing content matters.";
 
 const patchToolDescription =
-  "Apply a strict unified diff to an existing vault markdown note. Requires path and patch; include expectedFileHash from a prior read to prevent stale concurrent edits. Read the note first when generating the diff or hash, and retry from fresh content if a conflict or hash mismatch occurs. The response is metadata-only JSON with path and indexing status; it does not echo patch contents.";
+  "Apply a strict unified diff to an existing vault note. Read the note first to generate the diff and obtain the file hash. Retry from fresh content on hash mismatch.";
 
 function createRemoveToolDescription(
   config: Awaited<ReturnType<typeof loadMcpServerConfig>>,
@@ -126,7 +126,7 @@ function createRemoveToolDescription(
     ? `Configured to archive removed notes under ${config.archiveFolder ?? defaultArchiveFolder}.`
     : "Configured to permanently delete removed notes.";
 
-  return `Remove an existing Obsidian-compatible markdown note from the vault. Requires path and optional expectedFileHash; strongly prefer reading first and passing the returned hash to prevent stale concurrent deletion. ${removeBehavior} The response is metadata-only JSON with path, operation, archive path when applicable, and index cleanup status; it does not echo note contents.`;
+  return `Remove a vault note. Read first and pass the file hash to prevent stale concurrent deletion. ${removeBehavior}`;
 }
 
 export function isMainModule(

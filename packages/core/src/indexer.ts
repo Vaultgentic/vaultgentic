@@ -116,11 +116,13 @@ export type TitleSearchResult = {
 export type SearchFilterDiagnostics = {
   appliedFilters: {
     scope?: string;
+    path?: string;
     tags: string[];
   };
   matchedNoteCounts: {
     allFilters: number;
     scope?: number;
+    path?: number;
     tags: Record<string, number>;
   };
   warnings: string[];
@@ -746,6 +748,15 @@ export function readSearchFilterDiagnostics(
               scope: options.scope,
             }),
           );
+    const path =
+      options.path === undefined
+        ? undefined
+        : readFilteredNoteCount(
+            activeDatabase,
+            buildSearchFilterSql("notes", {
+              path: options.path,
+            }),
+          );
     const tagCounts = Object.fromEntries(
       tags.map((tag) => [
         tag,
@@ -759,12 +770,17 @@ export function readSearchFilterDiagnostics(
       ...(options.scope !== undefined && scope === 0
         ? [`No indexed notes match scope: ${options.scope}`]
         : []),
+      ...(options.path !== undefined && path === 0
+        ? [`No indexed notes match path: ${options.path}`]
+        : []),
       ...Object.entries(tagCounts)
         .filter(([, count]) => count === 0)
         .map(([tag]) => `No indexed notes match tag: ${tag}`),
     ];
     const appliedFilterCount =
-      (options.scope === undefined ? 0 : 1) + tags.length;
+      (options.scope === undefined ? 0 : 1) +
+      (options.path === undefined ? 0 : 1) +
+      tags.length;
     const warnings = [
       ...individualWarnings,
       ...(allFilters === 0 &&
@@ -775,10 +791,11 @@ export function readSearchFilterDiagnostics(
     ];
 
     return {
-      appliedFilters: { scope: options.scope, tags },
+      appliedFilters: { scope: options.scope, path: options.path, tags },
       matchedNoteCounts: {
         allFilters,
         ...(scope === undefined ? {} : { scope }),
+        ...(path === undefined ? {} : { path }),
         tags: tagCounts,
       },
       warnings,

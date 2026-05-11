@@ -10,13 +10,21 @@ export type RemoveToolResponse = {
 };
 
 export const removeToolInputSchema = z.object({
-  path: z.string().trim().min(1).max(500),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .describe("Vault-relative path of the note to remove."),
   expectedFileHash: z
     .string()
     .regex(/^sha256:[a-f0-9]{64}$/iu, {
       message: "expectedFileHash must use sha256:<hex>",
     })
-    .optional(),
+    .optional()
+    .describe(
+      "sha256:<hex> hash from a prior read. Recommended to prevent stale concurrent deletion.",
+    ),
 });
 
 export function createRemoveToolHandler(options: {

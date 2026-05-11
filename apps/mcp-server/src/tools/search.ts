@@ -59,15 +59,55 @@ const searchQuerySchema = z
       .max(1_000),
   );
 
-export const searchToolInputSchema = z.object({
-  query: searchQuerySchema,
-  mode: z.enum(["hybrid", "semantic", "keyword", "title"]).default("hybrid"),
-  limit: z.number().int().min(1).max(100).optional(),
-  scope: z.string().trim().min(1).max(500).optional(),
-  path: z.string().trim().min(1).max(500).optional(),
-  tags: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
-  includeScores: z.boolean().optional(),
-});
+export const searchToolInputSchema = z
+  .object({
+    query: searchQuerySchema.describe("Search query text."),
+    mode: z
+      .enum(["hybrid", "semantic", "keyword", "title"])
+      .default("hybrid")
+      .describe(
+        "Search mode. hybrid (default) combines keyword, semantic, and title results using reciprocal-rank fusion. semantic uses vector similarity. keyword uses BM25 full-text search. title matches note titles, paths, and aliases.",
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .optional()
+      .describe("Maximum number of results to return (1-100)."),
+    scope: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe(
+        "Restrict results to notes under this directory prefix. Mutually exclusive with path — omit both for unscoped searches.",
+      ),
+    path: z
+      .string()
+      .trim()
+      .min(1)
+      .max(500)
+      .optional()
+      .describe(
+        "Restrict results to an exact note path. Mutually exclusive with scope — omit both for unscoped searches.",
+      ),
+    tags: z
+      .array(z.string().trim().min(1).max(100))
+      .max(20)
+      .optional()
+      .describe("Filter results to notes with all of these frontmatter tags."),
+    includeScores: z
+      .boolean()
+      .optional()
+      .describe(
+        "Include score and componentScores in results. Hybrid scores use reciprocal-rank fusion (~0.01-0.025) and are not comparable to keyword BM25 or title scores.",
+      ),
+  })
+  .refine((input) => !(input.scope !== undefined && input.path !== undefined), {
+    message: "scope and path are mutually exclusive — use one or the other",
+  });
 
 export function createSearchToolHandler(options: {
   config: McpServerConfig;

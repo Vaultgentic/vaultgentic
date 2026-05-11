@@ -60,11 +60,23 @@ const frontmatterSchema = z
 const stringListSchema = z.array(z.string().trim().min(1).max(100)).max(50);
 
 export const writeToolInputSchema = z.object({
-  path: z.string().trim().min(1).max(500),
-  body: z.string().max(200_000),
-  frontmatter: frontmatterSchema.optional(),
-  tags: stringListSchema.optional(),
-  aliases: stringListSchema.optional(),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .describe("Vault-relative path for the note."),
+  body: z
+    .string()
+    .max(200_000)
+    .describe("Markdown body of the note, excluding frontmatter."),
+  frontmatter: frontmatterSchema
+    .optional()
+    .describe(
+      "Additional frontmatter key-value pairs to merge into the note header.",
+    ),
+  tags: stringListSchema.optional().describe("Frontmatter tags."),
+  aliases: stringListSchema.optional().describe("Frontmatter aliases."),
 });
 
 export function createWriteToolHandler(options: {

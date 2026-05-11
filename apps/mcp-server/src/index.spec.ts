@@ -919,31 +919,19 @@ describe("GIVEN the MCP server skeleton", () => {
 
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
-        ).toContain("Returns compact JSON with results");
-        expect(
-          getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
-        ).toContain("limit 1-100");
+        ).toContain("Omit scope, path, and tags for unscoped searches");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_read"),
-        ).toContain("Use before patching or overwriting");
-        expect(
-          getRegisteredToolDescription(mcpServer.server, "vaultgentic_read"),
-        ).toContain("file hash for concurrency checks");
+        ).toContain("Read before patching or overwriting");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_write"),
-        ).toContain("whole-note write, so read first");
-        expect(
-          getRegisteredToolDescription(mcpServer.server, "vaultgentic_write"),
-        ).toContain("metadata-only JSON");
+        ).toContain("whole-note write");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
-        ).toContain("include expectedFileHash from a prior read");
-        expect(
-          getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
-        ).toContain("does not echo patch contents");
+        ).toContain("Read the note first");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_remove"),
-        ).toContain("strongly prefer reading first");
+        ).toContain("Read first and pass the file hash");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_remove"),
         ).toContain("Configured to archive removed notes under");

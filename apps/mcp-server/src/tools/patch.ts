@@ -10,20 +10,29 @@ export type PatchToolResponse = {
 };
 
 export const patchToolInputSchema = z.object({
-  path: z.string().trim().min(1).max(500),
+  path: z
+    .string()
+    .trim()
+    .min(1)
+    .max(500)
+    .describe("Vault-relative path of the note to patch."),
   patch: z
     .string()
     .min(1)
     .max(200_000)
     .refine((patch) => patch.trim().length > 0, {
       message: "patch must be a non-empty string",
-    }),
+    })
+    .describe("Strict unified diff to apply."),
   expectedFileHash: z
     .string()
     .regex(/^sha256:[a-f0-9]{64}$/iu, {
       message: "expectedFileHash must use sha256:<hex>",
     })
-    .optional(),
+    .optional()
+    .describe(
+      "sha256:<hex> hash from a prior read. Recommended to prevent stale concurrent edits.",
+    ),
 });
 
 export function createPatchToolHandler(options: {

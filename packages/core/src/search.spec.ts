@@ -92,6 +92,56 @@ describe("GIVEN shared vault search", () => {
         });
       });
 
+      it("SHOULD report filter diagnostics for an unmatched path", async () => {
+        const config = await createSearchFixture(
+          "search-path-filter-diagnostics",
+        );
+        await writeNote(
+          config.vaultPath,
+          "projects/alpha.md",
+          "# Alpha\n\nsharedneedle alpha",
+        );
+        initializeSearchDatabase(config);
+        await refreshSearchIndex(config);
+
+        const diagnostics = readSearchFilterDiagnostics(config, {
+          path: "projects/missing.md",
+        });
+
+        expect(diagnostics).toEqual({
+          appliedFilters: { path: "projects/missing.md", tags: [] },
+          matchedNoteCounts: {
+            allFilters: 0,
+            path: 0,
+            tags: {},
+          },
+          warnings: ["No indexed notes match path: projects/missing.md"],
+        });
+      });
+
+      it("SHOULD report filter diagnostics for a matched path", async () => {
+        const config = await createSearchFixture(
+          "search-path-filter-match-diagnostics",
+        );
+        await writeNote(
+          config.vaultPath,
+          "projects/alpha.md",
+          "# Alpha\n\nsharedneedle alpha",
+        );
+        initializeSearchDatabase(config);
+        await refreshSearchIndex(config);
+
+        const diagnostics = readSearchFilterDiagnostics(config, {
+          path: "projects/alpha.md",
+        });
+
+        expect(diagnostics).toMatchObject({
+          appliedFilters: { path: "projects/alpha.md", tags: [] },
+          matchedNoteCounts: { allFilters: 1, path: 1 },
+          warnings: [],
+        });
+      });
+
       it("SHOULD warn when filters match separately but not together", async () => {
         const config = await createSearchFixture(
           "search-combined-filter-diagnostics",

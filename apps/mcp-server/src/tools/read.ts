@@ -21,13 +21,26 @@ export type ReadToolResponse = {
 };
 
 export const readToolInputSchema = z.object({
-  target: z.union([
-    z.string().trim().min(1).max(500),
-    z.number().int().positive(),
-  ]),
-  maxChars: z.number().int().min(1).max(200_000).optional(),
-  includeMetadata: z.boolean().optional(),
-  includeNoteContext: z.boolean().optional(),
+  target: z
+    .union([z.string().trim().min(1).max(500), z.number().int().positive()])
+    .describe("Vault-relative note path or indexed chunk id."),
+  maxChars: z
+    .number()
+    .int()
+    .min(1)
+    .max(200_000)
+    .optional()
+    .describe("Maximum characters to return. Defaults to 20000."),
+  includeMetadata: z
+    .boolean()
+    .optional()
+    .describe(
+      "Include note metadata such as file hash. Required for concurrency-safe patch or overwrite.",
+    ),
+  includeNoteContext: z
+    .boolean()
+    .optional()
+    .describe("Include surrounding note context when reading a chunk."),
 });
 
 const defaultReadMaxChars = 20_000;
