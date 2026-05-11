@@ -5,6 +5,13 @@
 - Add comments to the task whenever changes are made by request, with justification and explanation.
 - When approval is given commit, push, and close the task.
 
+# Releases
+
+- Release changes through Changesets automation only.
+- For a requested package release, create and commit a `.changeset/*.md` file with the intended package bumps, then push it to `main` and let the Release workflow open/update the `Version packages` pull request.
+- Do not run `pnpm version-packages`, `pnpm changeset version`, `pnpm release`, or create/push release tags locally unless the user explicitly asks for a manual repair.
+- After the `Version packages` pull request is merged, verify the Release workflow published the packages and created GitHub Releases for the new package tags.
+
 # Deep modules
 
 Prefer deep modules: hide real complexity behind small, stable interfaces.

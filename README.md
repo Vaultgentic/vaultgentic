@@ -90,10 +90,12 @@ pnpm build
 pnpm test
 ```
 
-Release maintenance uses Changesets:
+Release maintenance uses Changesets automation. Do not version or publish packages locally during the normal release flow.
 
 ```sh
 pnpm changeset
-pnpm version-packages
-pnpm release:dry-run
 ```
+
+Commit and push the generated `.changeset/*.md` file to `main`. The Release workflow opens or updates the `Version packages` pull request. Merge that pull request to publish packages and create GitHub Releases.
+
+Use `pnpm release:dry-run` only to inspect what would publish. Do not run `pnpm version-packages` or `pnpm release` locally unless repairing a failed release by explicit request.
