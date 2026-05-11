@@ -14,6 +14,8 @@ export {
   configDirectoryName,
   configFileName,
   ConfigServiceError,
+  defaultArchiveFolder,
+  defaultArchiveOnRemove,
   defaultIgnoredPaths,
   defaultSearchLimit,
   getDefaultConfigPath,

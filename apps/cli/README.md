@@ -37,9 +37,13 @@ Create a config file:
   "vaultPath": "/absolute/path/to/ObsidianVault",
   "databasePath": "/absolute/path/to/ObsidianVault/.vaultgentic/index.sqlite",
   "searchLimit": 5,
+  "archiveOnRemove": true,
+  "archiveFolder": "_archives",
   "ignoredPaths": ["Templates", "Archive/private", "**/node_modules/**"]
 }
 ```
+
+Vaultgentic defaults to archiving future remove operations into `_archives` at the vault root and ignores `_archives` during indexing.
 
 Pass it with `--config`:
 

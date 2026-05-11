@@ -21,8 +21,11 @@ describe("GIVEN MCP server config bootstrap", () => {
           vaultPath,
           databasePath: path.join(vaultPath, ".vaultgentic", "index.sqlite"),
           searchLimit: 5,
+          archiveOnRemove: true,
+          archiveFolder: "_archives",
         });
         expect(config.ignoredPaths).toContain(".vaultgentic");
+        expect(config.ignoredPaths).toContain("_archives");
       });
 
       it("SHOULD prefer explicit config over the MCP vault path environment variable", async () => {

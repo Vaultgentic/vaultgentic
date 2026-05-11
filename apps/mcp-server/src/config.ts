@@ -1,5 +1,7 @@
 import {
   ConfigServiceError,
+  defaultArchiveFolder,
+  defaultArchiveOnRemove,
   defaultIgnoredPaths,
   defaultSearchLimit,
   loadConfig,
@@ -57,6 +59,8 @@ export async function loadMcpServerConfig(
     databasePath: path.join(vaultPath, ".vaultgentic", "index.sqlite"),
     ignoredPaths: defaultIgnoredPaths,
     searchLimit: defaultSearchLimit,
+    archiveOnRemove: defaultArchiveOnRemove,
+    archiveFolder: defaultArchiveFolder,
   };
 }
 

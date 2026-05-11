@@ -36,6 +36,8 @@ Example config:
   "vaultPath": "/absolute/path/to/ObsidianVault",
   "databasePath": "/absolute/path/to/ObsidianVault/.vaultgentic/index.sqlite",
   "searchLimit": 5,
+  "archiveOnRemove": true,
+  "archiveFolder": "_archives",
   "ignoredPaths": ["Templates", "Archive/private", "**/node_modules/**"]
 }
 ```
@@ -45,7 +47,9 @@ Fields:
 - `vaultPath`: required path to your Markdown vault.
 - `databasePath`: required path for the SQLite index.
 - `searchLimit`: optional default result count. Defaults to `5`.
-- `ignoredPaths`: optional vault-relative paths or glob patterns to skip. Vaultgentic always ignores `.obsidian`, `.trash`, `node_modules`, `.git`, and `.vaultgentic`.
+- `archiveOnRemove`: optional flag for future remove workflows to archive removed notes instead of deleting immediately. Defaults to `true`.
+- `archiveFolder`: optional vault-root folder for archived removes. Defaults to `_archives`.
+- `ignoredPaths`: optional vault-relative paths or glob patterns to skip. Vaultgentic always ignores `.obsidian`, `.trash`, `node_modules`, `.git`, `.vaultgentic`, and `_archives`.
 
 ## Quick start
 

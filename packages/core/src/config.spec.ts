@@ -4,6 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ConfigServiceError,
+  defaultArchiveFolder,
+  defaultArchiveOnRemove,
   defaultIgnoredPaths,
   defaultSearchLimit,
   getDefaultConfigPath,
@@ -30,8 +32,16 @@ describe("GIVEN Vaultgentic config loading", () => {
         await expect(loadConfig({ configPath, cwd })).resolves.toEqual({
           vaultPath: path.join(cwd, "vault"),
           databasePath: path.join(cwd, ".vaultgentic/index.sqlite"),
-          ignoredPaths: [...defaultIgnoredPaths, "archive"],
+          ignoredPaths: [
+            ...defaultIgnoredPaths.filter(
+              (ignoredPath) => ignoredPath !== defaultArchiveFolder,
+            ),
+            "archive",
+            defaultArchiveFolder,
+          ],
           searchLimit: defaultSearchLimit,
+          archiveOnRemove: defaultArchiveOnRemove,
+          archiveFolder: defaultArchiveFolder,
         });
       });
 
@@ -50,9 +60,12 @@ describe("GIVEN Vaultgentic config loading", () => {
 
         await expect(loadConfig({ configPath, cwd })).resolves.toMatchObject({
           ignoredPaths: [
-            ...defaultIgnoredPaths,
+            ...defaultIgnoredPaths.filter(
+              (ignoredPath) => ignoredPath !== defaultArchiveFolder,
+            ),
             "**/node_modules/**",
             "\\!important.md",
+            defaultArchiveFolder,
           ],
         });
       });
@@ -71,6 +84,64 @@ describe("GIVEN Vaultgentic config loading", () => {
 
         await expect(loadConfig({ configPath, cwd })).resolves.toMatchObject({
           searchLimit: 3,
+        });
+      });
+
+      it("SHOULD return configured archive remove settings", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-config-"));
+        const configPath = path.join(cwd, "custom-config.json");
+        await writeFile(
+          configPath,
+          JSON.stringify({
+            vaultPath: "vault",
+            databasePath: ".vaultgentic/index.sqlite",
+            archiveOnRemove: false,
+            archiveFolder: "Deleted Notes",
+          }),
+        );
+
+        await expect(loadConfig({ configPath, cwd })).resolves.toMatchObject({
+          archiveOnRemove: false,
+          archiveFolder: "Deleted Notes",
+        });
+      });
+
+      it("SHOULD ignore a configured archive folder when archive removes are enabled", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-config-"));
+        const configPath = path.join(cwd, "custom-config.json");
+        await writeFile(
+          configPath,
+          JSON.stringify({
+            vaultPath: "vault",
+            databasePath: ".vaultgentic/index.sqlite",
+            archiveFolder: "Deleted Notes",
+          }),
+        );
+
+        await expect(loadConfig({ configPath, cwd })).resolves.toMatchObject({
+          ignoredPaths: [...defaultIgnoredPaths, "Deleted Notes"],
+        });
+      });
+
+      it("SHOULD keep the archive folder ignore after configured ignore paths", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-config-"));
+        const configPath = path.join(cwd, "custom-config.json");
+        await writeFile(
+          configPath,
+          JSON.stringify({
+            vaultPath: "vault",
+            databasePath: ".vaultgentic/index.sqlite",
+            archiveFolder: "Deleted Notes",
+            ignoredPaths: ["!Deleted Notes/keep.md"],
+          }),
+        );
+
+        await expect(loadConfig({ configPath, cwd })).resolves.toMatchObject({
+          ignoredPaths: [
+            ...defaultIgnoredPaths,
+            "!Deleted Notes/keep.md",
+            "Deleted Notes",
+          ],
         });
       });
     });
@@ -268,6 +339,31 @@ describe("GIVEN Vaultgentic config loading", () => {
           await expect(
             loadConfig({ configPath: "config.json", cwd }),
           ).rejects.toThrow("searchLimit");
+        },
+      );
+    });
+  });
+
+  describe("WHEN archive folder config is invalid", () => {
+    describe("THEN clear validation errors are thrown", () => {
+      it.each(["../outside", "/tmp/archive"])(
+        "SHOULD reject %s as an archive folder",
+        async (archiveFolder) => {
+          const cwd = await mkdtemp(
+            path.join(tmpdir(), "vaultgentic-invalid-archive-folder-"),
+          );
+          await writeFile(
+            path.join(cwd, "config.json"),
+            JSON.stringify({
+              vaultPath: "vault",
+              databasePath: "db.sqlite",
+              archiveFolder,
+            }),
+          );
+
+          await expect(
+            loadConfig({ configPath: "config.json", cwd }),
+          ).rejects.toThrow("Archive folder");
         },
       );
     });

@@ -33,9 +33,13 @@ Use a standard Vaultgentic config file:
   "vaultPath": "/absolute/path/to/ObsidianVault",
   "databasePath": "/absolute/path/to/ObsidianVault/.vaultgentic/index.sqlite",
   "searchLimit": 5,
+  "archiveOnRemove": true,
+  "archiveFolder": "_archives",
   "ignoredPaths": ["Templates", "Archive/private", "**/node_modules/**"]
 }
 ```
+
+`archiveOnRemove` defaults to `true` and `archiveFolder` defaults to `_archives` at the vault root. Vaultgentic ignores `_archives` by default so archived notes are not indexed.
 
 Then point the server at it:
 

@@ -10,9 +10,12 @@ export const defaultIgnoredPaths = [
   "node_modules",
   ".git",
   ".vaultgentic",
+  "_archives",
 ];
 
 export const defaultSearchLimit = 5;
+export const defaultArchiveOnRemove = true;
+export const defaultArchiveFolder = "_archives";
 
 export const configDirectoryName = "vaultgentic";
 export const configFileName = "config.json";
@@ -29,6 +32,8 @@ const configSchema = z.object({
   databasePath: z.string().trim().min(1),
   ignoredPaths: z.array(z.string()).optional(),
   searchLimit: z.number().int().min(1).max(100).optional(),
+  archiveOnRemove: z.boolean().optional(),
+  archiveFolder: z.string().trim().min(1).optional(),
 });
 
 export async function loadConfig(
@@ -38,6 +43,8 @@ export async function loadConfig(
   databasePath: string;
   ignoredPaths: string[];
   searchLimit: number;
+  archiveOnRemove: boolean;
+  archiveFolder: string;
 }> {
   const cwd = options.cwd ?? process.cwd();
   const configPath = resolveConfigPath(options.configPath, cwd);
@@ -73,13 +80,23 @@ export async function loadConfig(
   const parsedConfig = parseResult.data;
   const vaultPath = resolveVaultPath(parsedConfig.vaultPath, { cwd });
   const databasePath = path.resolve(cwd, parsedConfig.databasePath);
-  const ignoredPaths = mergeIgnoredPaths(parsedConfig.ignoredPaths ?? []);
+  const archiveOnRemove =
+    parsedConfig.archiveOnRemove ?? defaultArchiveOnRemove;
+  const archiveFolder = resolveArchiveFolder(
+    vaultPath,
+    parsedConfig.archiveFolder ?? defaultArchiveFolder,
+  );
+  const ignoredPaths = mergeIgnoredPaths(parsedConfig.ignoredPaths ?? [], {
+    archiveFolder: archiveOnRemove ? archiveFolder : undefined,
+  });
 
   return {
     vaultPath,
     databasePath,
     ignoredPaths,
     searchLimit: parsedConfig.searchLimit ?? defaultSearchLimit,
+    archiveOnRemove,
+    archiveFolder,
   };
 }
 
@@ -161,8 +178,36 @@ function resolveConfigPath(
   return getDefaultConfigPath();
 }
 
-function mergeIgnoredPaths(configuredPaths: string[]): string[] {
-  return [...new Set([...defaultIgnoredPaths, ...configuredPaths])];
+function resolveArchiveFolder(
+  vaultPath: string,
+  archiveFolder: string,
+): string {
+  if (path.isAbsolute(archiveFolder)) {
+    throw new ConfigServiceError("Archive folder must be vault-relative");
+  }
+
+  try {
+    return resolveVaultRelativePath(vaultPath, archiveFolder);
+  } catch (error) {
+    throw new ConfigServiceError("Archive folder must be vault-relative", {
+      cause: error,
+    });
+  }
+}
+
+function mergeIgnoredPaths(
+  configuredPaths: string[],
+  options: { archiveFolder?: string } = {},
+): string[] {
+  const paths = [...defaultIgnoredPaths, ...configuredPaths].filter(
+    (ignoredPath) => ignoredPath !== options.archiveFolder,
+  );
+
+  if (options.archiveFolder !== undefined) {
+    paths.push(options.archiveFolder);
+  }
+
+  return [...new Set(paths)];
 }
 
 function toPublicPath(relativePath: string): string {
