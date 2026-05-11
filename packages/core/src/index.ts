@@ -73,6 +73,13 @@ export {
 } from "./read.js";
 
 export {
+  writeVaultNote,
+  VaultWriteError,
+  type WriteVaultNoteOptions,
+  type WriteVaultNoteResult,
+} from "./write.js";
+
+export {
   searchVault,
   type HybridComponentName,
   type HybridComponentScore,
