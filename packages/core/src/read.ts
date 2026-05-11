@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, realpath, stat } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
@@ -19,6 +20,7 @@ export type ReadVaultTargetResult = ReadVaultNoteResult | ReadVaultChunkResult;
 export type ReadVaultNoteResult = {
   type: "note";
   path: string;
+  fileHash: string;
   content: string;
   truncated: boolean;
   originalLength: number;
@@ -136,6 +138,7 @@ async function readNoteByPath(
   const result: ReadVaultNoteResult = {
     type: "note",
     path: relativePath,
+    fileHash: hashNoteContent(content),
     content: truncatedContent.text,
     truncated: truncatedContent.truncated,
     originalLength: content.length,
@@ -375,6 +378,10 @@ function truncateText(
   );
 
   return { text: `${readableText}…`, truncated: true };
+}
+
+function hashNoteContent(content: string): string {
+  return `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`;
 }
 
 function trimToReadableBoundary(text: string, nextCharacter: string): string {

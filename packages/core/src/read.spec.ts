@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -35,10 +36,90 @@ describe("GIVEN a vault read service", () => {
         expect(result).toMatchObject({
           type: "note",
           path: "alpha.md",
+          fileHash: hashContent(content),
           content,
           truncated: false,
           originalLength: content.length,
         });
+      });
+    });
+  });
+
+  describe("WHEN a vault-relative note path is read", () => {
+    describe("THEN a full-note file hash is returned", () => {
+      it("SHOULD return a stable sha256 hash of the note content", async () => {
+        const config = await createFixture("note-hash");
+        const content = "# Alpha\n\nReadable note text.";
+        await writeFile(path.join(config.vaultPath, "alpha.md"), content);
+
+        const firstResult = await readVaultTarget(config, {
+          target: "alpha.md",
+        });
+        const secondResult = await readVaultTarget(config, {
+          target: "alpha.md",
+        });
+
+        expect(firstResult).toMatchObject({
+          type: "note",
+          fileHash: hashContent(content),
+        });
+        expect(secondResult).toMatchObject({
+          type: "note",
+          fileHash: hashContent(content),
+        });
+      });
+
+      it("SHOULD hash the full content before maxChars truncation", async () => {
+        const config = await createFixture("note-hash-truncated");
+        const content = "Alpha beta gamma delta";
+        await writeFile(path.join(config.vaultPath, "alpha.md"), content);
+
+        const result = await readVaultTarget(config, {
+          target: "alpha.md",
+          maxChars: 6,
+        });
+
+        expect(result).toMatchObject({
+          type: "note",
+          fileHash: hashContent(content),
+          content: "Alpha…",
+          truncated: true,
+        });
+      });
+
+      it("SHOULD NOT normalize line endings before hashing", async () => {
+        const config = await createFixture("note-hash-line-endings");
+        const content = "# Alpha\r\n\r\nLine with CRLF.\r\n";
+        await writeFile(path.join(config.vaultPath, "alpha.md"), content);
+
+        const result = await readVaultTarget(config, { target: "alpha.md" });
+
+        expect(result).toMatchObject({
+          type: "note",
+          fileHash: hashContent(content),
+        });
+        expect(result.type === "note" ? result.fileHash : "").not.toBe(
+          hashContent(content.replaceAll("\r\n", "\n")),
+        );
+      });
+
+      it("SHOULD NOT return a file hash for chunk reads", async () => {
+        const config = await createFixture("chunk-no-hash");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Alpha\n\nChunk body.",
+        );
+        await indexVaultFile(config, "alpha.md");
+        const chunkId = readChunkIdByText(config.databasePath, "Chunk body.");
+
+        const result = await readVaultTarget(config, {
+          target: String(chunkId),
+        });
+
+        expect(result).toMatchObject({
+          type: "chunk",
+        });
+        expect("fileHash" in result).toBe(false);
       });
     });
   });
@@ -335,4 +416,8 @@ function readChunkIdByText(databasePath: string, text: string): number {
   } finally {
     database.close();
   }
+}
+
+function hashContent(content: string): string {
+  return `sha256:${createHash("sha256").update(content, "utf8").digest("hex")}`;
 }
