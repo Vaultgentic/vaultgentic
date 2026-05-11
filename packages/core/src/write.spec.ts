@@ -1,10 +1,34 @@
 import { mkdir, mkdtemp, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { SearchDatabaseConfig } from "./database.js";
+import type { IndexFileResult } from "./indexer.js";
 import { VaultWriteError, writeVaultNote } from "./write.js";
 
+const { indexVaultFileMock } = vi.hoisted(() => ({
+  indexVaultFileMock: vi.fn(),
+}));
+
+vi.mock("./indexer.js", () => ({
+  indexVaultFile: indexVaultFileMock,
+}));
+
 describe("GIVEN a vault write service", () => {
+  beforeEach(() => {
+    indexVaultFileMock.mockReset();
+    indexVaultFileMock.mockImplementation(
+      async (
+        _config: SearchDatabaseConfig,
+        vaultRelativePath: string,
+      ): Promise<IndexFileResult> => ({
+        path: vaultRelativePath,
+        status: "indexed",
+        chunkCount: 1,
+      }),
+    );
+  });
+
   describe("WHEN a new vault-relative note is written", () => {
     describe("THEN a markdown note is created in the vault", () => {
       it("SHOULD return created metadata without exposing markdown contents", async () => {
@@ -18,14 +42,94 @@ describe("GIVEN a vault write service", () => {
         expect(result).toEqual({
           path: "notes/alpha.md",
           operation: "created",
-          indexed: false,
-          warning:
-            "Note was written, but indexing has not run. Search results may be stale.",
+          indexed: true,
         });
         expect(
           await readFile(path.join(config.vaultPath, "notes/alpha.md"), "utf8"),
         ).toBe("# Alpha\n\nCreated note.");
         expect(result).not.toHaveProperty("content");
+      });
+
+      it("SHOULD index the note after the write succeeds", async () => {
+        const config = await createFixture("index-after-write");
+        indexVaultFileMock.mockImplementationOnce(
+          async (
+            indexConfig: SearchDatabaseConfig,
+            vaultRelativePath: string,
+          ): Promise<IndexFileResult> => {
+            await expect(
+              readFile(
+                path.join(indexConfig.vaultPath, vaultRelativePath),
+                "utf8",
+              ),
+            ).resolves.toBe("Indexed note.");
+
+            return {
+              path: vaultRelativePath,
+              status: "indexed",
+              chunkCount: 1,
+            };
+          },
+        );
+
+        const result = await writeVaultNote(config, {
+          path: "notes/alpha.md",
+          body: "Indexed note.",
+        });
+
+        expect(indexVaultFileMock).toHaveBeenCalledWith(
+          config,
+          "notes/alpha.md",
+        );
+        expect(result).toMatchObject({
+          path: "notes/alpha.md",
+          indexed: true,
+        });
+        expect(result).not.toHaveProperty("warning");
+      });
+
+      it("SHOULD treat skipped indexing as indexed without a warning", async () => {
+        const config = await createFixture("index-skipped");
+        indexVaultFileMock.mockResolvedValueOnce({
+          path: "alpha.md",
+          status: "skipped",
+          chunkCount: 1,
+        } satisfies IndexFileResult);
+
+        const result = await writeVaultNote(config, {
+          path: "alpha.md",
+          body: "Skipped index note.",
+        });
+
+        expect(result).toEqual({
+          path: "alpha.md",
+          operation: "created",
+          indexed: true,
+        });
+      });
+
+      it("SHOULD keep the note when indexing fails", async () => {
+        const config = await createFixture("index-failure");
+        const indexError = new Error("database unavailable");
+        indexError.stack = "stack trace should stay internal";
+        indexVaultFileMock.mockRejectedValueOnce(indexError);
+
+        const result = await writeVaultNote(config, {
+          path: "alpha.md",
+          body: "Written before index failure.",
+        });
+
+        expect(result).toEqual({
+          path: "alpha.md",
+          operation: "created",
+          indexed: false,
+          warning:
+            "Note was written, but indexing failed. Search results may be stale.",
+        });
+        expect(result.warning).not.toContain("stack trace");
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("Written before index failure.");
       });
 
       it("SHOULD create parent directories for valid note paths", async () => {
@@ -93,9 +197,7 @@ describe("GIVEN a vault write service", () => {
         expect(result).toEqual({
           path: "alpha.md",
           operation: "updated",
-          indexed: false,
-          warning:
-            "Note was written, but indexing has not run. Search results may be stale.",
+          indexed: true,
         });
         await expect(
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),

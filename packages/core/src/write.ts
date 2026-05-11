@@ -4,6 +4,7 @@ import matter from "gray-matter";
 import { ConfigServiceError, resolveVaultRelativePath } from "./config.js";
 import type { SearchDatabaseConfig } from "./database.js";
 import { VaultgenticError } from "./errors.js";
+import { indexVaultFile } from "./indexer.js";
 
 export type WriteVaultNoteOptions = {
   path: string;
@@ -25,8 +26,8 @@ export class VaultWriteError extends VaultgenticError {
   }
 }
 
-const unindexedWriteWarning =
-  "Note was written, but indexing has not run. Search results may be stale.";
+const indexingFailedWarning =
+  "Note was written, but indexing failed. Search results may be stale.";
 
 export async function writeVaultNote(
   config: SearchDatabaseConfig,
@@ -50,12 +51,15 @@ export async function writeVaultNote(
     await ensureParentInsideVault(config.vaultPath, absolutePath);
     await ensureLeafSymlinkInsideVault(config.vaultPath, absolutePath);
     await writeFile(absolutePath, markdown, "utf8");
+    const indexResult = await indexWrittenNote(config, relativePath);
 
     return {
       path: relativePath,
       operation,
-      indexed: false,
-      warning: unindexedWriteWarning,
+      indexed: indexResult.indexed,
+      ...(indexResult.warning === undefined
+        ? {}
+        : { warning: indexResult.warning }),
     };
   } catch (error) {
     if (error instanceof VaultWriteError) {
@@ -66,6 +70,21 @@ export async function writeVaultNote(
       `Failed to write vault note ${options.path}: ${errorMessage(error)}`,
       { cause: error },
     );
+  }
+}
+
+async function indexWrittenNote(
+  config: SearchDatabaseConfig,
+  relativePath: string,
+): Promise<{ indexed: boolean; warning?: string }> {
+  try {
+    await indexVaultFile(config, relativePath);
+    return { indexed: true };
+  } catch {
+    return {
+      indexed: false,
+      warning: indexingFailedWarning,
+    };
   }
 }
 
