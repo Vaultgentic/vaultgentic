@@ -41,6 +41,11 @@ export type SyncSearchIndexResult = {
   deletedPaths: string[];
 };
 
+export type RemoveIndexedPathResult = {
+  path: string;
+  deleted: boolean;
+};
+
 export type RefreshSearchIndexResult = {
   sync: SyncSearchIndexResult;
   status: DatabaseStatus;
@@ -249,6 +254,30 @@ export async function indexVaultFile(
       `Failed to index vault file ${vaultRelativePath}`,
       error,
     );
+  }
+}
+
+export function removeIndexedVaultPath(
+  config: SearchDatabaseConfig,
+  vaultRelativePath: string,
+): RemoveIndexedPathResult {
+  let database: Database.Database | undefined;
+  try {
+    const relativePath = resolveIndexPath(config.vaultPath, vaultRelativePath);
+    database = openSearchDatabase(config);
+    const activeDatabase = database;
+    const deleted = activeDatabase.transaction(() =>
+      deleteIndexedPath(activeDatabase, relativePath),
+    )();
+
+    return { path: relativePath, deleted };
+  } catch (error) {
+    throw toSearchIndexerError(
+      `Failed to remove indexed vault path ${vaultRelativePath}`,
+      error,
+    );
+  } finally {
+    database?.close();
   }
 }
 
@@ -1030,10 +1059,11 @@ function isExistingNoteCurrent(
 function deleteIndexedPath(
   database: Database.Database,
   indexedPath: string,
-): void {
+): boolean {
   const noteIds = database
     .prepare("SELECT id FROM notes WHERE path = ?")
     .all(indexedPath) as Array<{ id: number }>;
+  const deleted = noteIds.length > 0;
   const chunkIds = database
     .prepare("SELECT id FROM chunks WHERE path = ?")
     .all(indexedPath) as Array<{ id: number }>;
@@ -1052,6 +1082,8 @@ function deleteIndexedPath(
     deleteVector?.run(BigInt(chunk.id));
   }
   database.prepare("DELETE FROM notes WHERE path = ?").run(indexedPath);
+
+  return deleted;
 }
 
 function clearIndexedContent(database: Database.Database): void {

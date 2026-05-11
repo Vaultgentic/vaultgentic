@@ -10,6 +10,7 @@ import {
   indexVaultFile,
   rebuildSearchIndex,
   refreshSearchIndex,
+  removeIndexedVaultPath,
   searchBm25,
   searchSemantic,
   searchTitles,
@@ -189,6 +190,67 @@ describe("GIVEN a BM25 search index", () => {
           fts: 0,
           vectors: 0,
         });
+      });
+    });
+  });
+
+  describe("WHEN a single indexed path is removed", () => {
+    describe("THEN only that vault path is deleted from the search index", () => {
+      it("SHOULD delete note chunks, FTS rows, and vector rows", async () => {
+        const config = await createFixture("remove-indexed-path");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Alpha\n\nRemove me keyword.",
+        );
+        await writeFile(
+          path.join(config.vaultPath, "beta.md"),
+          "# Beta\n\nKeep me keyword.",
+        );
+        await syncSearchIndex(config);
+
+        const result = removeIndexedVaultPath(config, "alpha.md");
+
+        expect(result).toEqual({ path: "alpha.md", deleted: true });
+        expect(searchBm25(config, { query: "Remove" })).toEqual([]);
+        expect(searchBm25(config, { query: "Keep" })).toHaveLength(1);
+        expect(readCounts(config.databasePath)).toEqual({
+          notes: 1,
+          chunks: 1,
+          fts: 1,
+          vectors: 1,
+        });
+      });
+
+      it("SHOULD normalize nested vault-relative paths", async () => {
+        const config = await createFixture("remove-normalized-path");
+        await mkdir(path.join(config.vaultPath, "folder"), { recursive: true });
+        await writeFile(
+          path.join(config.vaultPath, "folder", "alpha.md"),
+          "# Alpha\n\nNested keyword.",
+        );
+        await syncSearchIndex(config);
+
+        const result = removeIndexedVaultPath(config, "./folder/alpha.md");
+
+        expect(result).toEqual({ path: "folder/alpha.md", deleted: true });
+        expect(readCounts(config.databasePath)).toEqual({
+          notes: 0,
+          chunks: 0,
+          fts: 0,
+          vectors: 0,
+        });
+      });
+    });
+  });
+
+  describe("WHEN a targeted remove path escapes the vault", () => {
+    describe("THEN path traversal is rejected by the indexer", () => {
+      it("SHOULD use the localized indexer error type", async () => {
+        const config = await createFixture("remove-path-traversal");
+
+        expect(() => removeIndexedVaultPath(config, "../escape.md")).toThrow(
+          SearchIndexerError,
+        );
       });
     });
   });
