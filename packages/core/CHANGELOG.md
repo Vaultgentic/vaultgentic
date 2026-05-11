@@ -1,5 +1,11 @@
 # @vaultgentic/core
 
+## 0.0.4
+
+### Patch Changes
+
+- 3e8fe1d: Fix patch diff application issues around blank lines
+
 ## 0.0.3
 
 ### Patch Changes

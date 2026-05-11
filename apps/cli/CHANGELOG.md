@@ -1,5 +1,12 @@
 # @vaultgentic/cli
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies [3e8fe1d]
+  - @vaultgentic/core@0.0.4
+
 ## 0.0.4
 
 ### Patch Changes
