@@ -94,6 +94,18 @@ const packageJson = require("../package.json") as { version: string };
 export const mcpServerPackageName = "vaultgentic-mcp-server";
 export const packageVersion = packageJson.version;
 
+const searchToolDescription =
+  "Search indexed vault notes. Requires a non-empty query. Optional mode is one of hybrid, semantic, keyword, or title; use limit 1-100, scope to restrict paths, tags to filter frontmatter tags, and includeScores only when ranking details are needed. Returns compact JSON with results containing path, title, rank, optional chunk/snippet/heading data, confidence warnings, score metadata when requested, index status, and refresh summary.";
+
+const readToolDescription =
+  "Read a vault note by relative path or an indexed chunk by id. Use before patching or overwriting when you need the current content, metadata, or file hash for concurrency checks. Optional maxChars is capped at 200000, includeMetadata adds note metadata such as hash, and includeNoteContext adds surrounding note context for chunk reads. Returns JSON with the requested content plus index status and refresh summary.";
+
+const writeToolDescription =
+  "Create or replace an Obsidian-compatible markdown note at a vault-relative path. Requires path and body; optional frontmatter, tags, and aliases are validated and serialized into frontmatter. This is a whole-note write, so read first when preserving existing content matters. The response is metadata-only JSON with path, operation, and indexing status; it does not echo the note body.";
+
+const patchToolDescription =
+  "Apply a strict unified diff to an existing vault markdown note. Requires path and patch; include expectedFileHash from a prior read to prevent stale concurrent edits. Read the note first when generating the diff or hash, and retry from fresh content if a conflict or hash mismatch occurs. The response is metadata-only JSON with path and indexing status; it does not echo patch contents.";
+
 export function isMainModule(
   moduleUrl: string,
   argvPath: string | undefined,
@@ -144,25 +156,25 @@ export async function createVaultgenticMcpServer(
 
   server.tool(
     "vaultgentic_search",
-    "Search indexed vault notes",
+    searchToolDescription,
     searchToolInputSchema.shape,
     async (input) => toMcpToolResult(search(input)),
   );
   server.tool(
     "vaultgentic_read",
-    "Read a vault note or indexed chunk",
+    readToolDescription,
     readToolInputSchema.shape,
     async (input) => toMcpToolResult(read(input)),
   );
   server.tool(
     "vaultgentic_write",
-    "Create or update an Obsidian-compatible markdown note.",
+    writeToolDescription,
     writeToolInputSchema.shape,
     async (input) => toMcpToolResult(write(input)),
   );
   server.tool(
     "vaultgentic_patch",
-    "Apply a strict unified diff to an existing vault markdown note",
+    patchToolDescription,
     patchToolInputSchema.shape,
     async (input) => toMcpToolResult(patch(input)),
   );

@@ -830,7 +830,7 @@ describe("GIVEN the MCP server skeleton", () => {
         expect(result.isError).toBeUndefined();
       });
 
-      it("SHOULD expose patch description through vaultgentic_patch", async () => {
+      it("SHOULD expose agent guidance in registered tool descriptions", async () => {
         const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
         const vaultPath = path.join(cwd, "vault");
         const databasePath = path.join(cwd, "index.sqlite");
@@ -843,10 +843,29 @@ describe("GIVEN the MCP server skeleton", () => {
         const mcpServer = await createVaultgenticMcpServer({ configPath });
 
         expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
+        ).toContain("Returns compact JSON with results");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_search"),
+        ).toContain("limit 1-100");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_read"),
+        ).toContain("Use before patching or overwriting");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_read"),
+        ).toContain("file hash for concurrency checks");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_write"),
+        ).toContain("whole-note write, so read first");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_write"),
+        ).toContain("metadata-only JSON");
+        expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
-        ).toBe(
-          "Apply a strict unified diff to an existing vault markdown note",
-        );
+        ).toContain("include expectedFileHash from a prior read");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
+        ).toContain("does not echo patch contents");
       });
 
       it("SHOULD return patch metadata through vaultgentic_patch", async () => {
