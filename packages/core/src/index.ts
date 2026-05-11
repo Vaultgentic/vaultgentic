@@ -91,6 +91,13 @@ export {
 } from "./patch.js";
 
 export {
+  removeVaultNote,
+  VaultRemoveError,
+  type RemoveVaultNoteOptions,
+  type RemoveVaultNoteResult,
+} from "./remove.js";
+
+export {
   searchVault,
   type HybridComponentName,
   type HybridComponentScore,
