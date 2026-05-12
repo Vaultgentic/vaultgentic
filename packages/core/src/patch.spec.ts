@@ -340,6 +340,79 @@ describe("GIVEN a vault patch service", () => {
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe("---\ntitle: New Title\n---\n\nUpdated body text.\n");
       });
+
+      it("SHOULD apply GNU unified diff headers with timestamps", async () => {
+        const config = await createFixture("gnu-timestamps");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: [
+            "--- alpha.md\t2026-05-12 10:00:00.000000000 +0000",
+            "+++ alpha.md\t2026-05-12 10:01:00.000000000 +0000",
+            "@@ -1 +1 @@",
+            "-Old note.",
+            "+New note.",
+            "",
+          ].join("\n"),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("New note.\n");
+      });
+
+      it("SHOULD apply hunk headers with section labels and blank context", async () => {
+        const config = await createFixture("hunk-section-label");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "# Heading\n\nOld note.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: [
+            "--- alpha.md",
+            "+++ alpha.md",
+            "@@ -1,3 +1,3 @@ Heading",
+            " # Heading",
+            "",
+            "-Old note.",
+            "+New note.",
+            "",
+          ].join("\n"),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("# Heading\n\nNew note.\n");
+      });
+
+      it("SHOULD apply git-style patch wrappers for paths with spaces", async () => {
+        const config = await createFixture("git-wrapper-spaces");
+        await writeFile(
+          path.join(config.vaultPath, "alpha note.md"),
+          "Old note.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha note.md",
+          patch: [
+            "diff --git a/alpha note.md b/alpha note.md",
+            "index 1111111..2222222 100644",
+            "--- a/alpha note.md",
+            "+++ b/alpha note.md",
+            "@@ -1 +1 @@",
+            "-Old note.",
+            "+New note.",
+            "",
+          ].join("\n"),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha note.md"), "utf8"),
+        ).resolves.toBe("New note.\n");
+      });
     });
   });
 
