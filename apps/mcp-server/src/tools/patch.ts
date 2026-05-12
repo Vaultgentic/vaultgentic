@@ -23,7 +23,9 @@ export const patchToolInputSchema = z.object({
     .refine((patch) => patch.trim().length > 0, {
       message: "patch must be a non-empty string",
     })
-    .describe("Strict unified diff to apply."),
+    .describe(
+      "Unified diff to apply. Supports GNU unified diff and git-style patch wrappers for one existing markdown note.",
+    ),
   expectedFileHash: z
     .string()
     .regex(/^sha256:[a-f0-9]{64}$/iu, {
