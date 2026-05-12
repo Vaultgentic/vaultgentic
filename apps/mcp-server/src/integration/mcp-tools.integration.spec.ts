@@ -885,7 +885,7 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
                 path: "patchable.md",
                 patch: "not a diff",
               },
-              message: "Patch contains unsupported trailing or metadata text",
+              message: "Malformed patch at line 1",
             },
           ];
 
