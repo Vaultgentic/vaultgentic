@@ -32,6 +32,7 @@ export class VaultPatchError extends VaultgenticError {
 
 const indexingFailedWarning =
   "Note was patched, but indexing failed. Search results may be stale.";
+const hunkHeaderPattern = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: .*)?$/u;
 
 export async function patchVaultNote(
   config: SearchDatabaseConfig,
@@ -159,17 +160,31 @@ function validateRawPatchText(patchText: string): void {
   }
 
   let inHunk = false;
-  for (const line of patchText.split("\n")) {
+  const lines = patchText.split("\n");
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    const lineNumber = index + 1;
+
     if (line === "") {
       continue;
     }
 
-    if (line.startsWith("@@ ")) {
+    if (hunkHeaderPattern.test(line)) {
       inHunk = true;
       continue;
     }
 
+    if (line.startsWith("@@")) {
+      throw new VaultPatchError(
+        `Malformed patch at line ${lineNumber}: ${JSON.stringify(line)}. Expected unified diff hunk header like "@@ -1,2 +1,2 @@".`,
+      );
+    }
+
     if (inHunk && /^[ +\\-]/u.test(line)) {
+      continue;
+    }
+
+    if (inHunk && line.startsWith("\\ No newline at end of file")) {
       continue;
     }
 
@@ -179,7 +194,7 @@ function validateRawPatchText(patchText: string): void {
     }
 
     throw new VaultPatchError(
-      `Patch contains unsupported trailing or metadata text: "${line}"`,
+      `Malformed patch at line ${lineNumber}: ${JSON.stringify(line)}. Expected a unified diff header, hunk header, hunk line starting with " ", "+", or "-", or "\\ No newline at end of file".`,
     );
   }
 }

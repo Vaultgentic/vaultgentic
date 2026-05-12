@@ -484,6 +484,27 @@ describe("GIVEN a vault patch service", () => {
         ).resolves.toBe("Old note.\n");
       });
 
+      it("SHOULD reject malformed hunk headers with line-aware diagnostics", async () => {
+        const config = await createFixture("malformed-hunk-header");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: [
+              "--- alpha.md",
+              "+++ alpha.md",
+              "@@ -1 +1",
+              "-Old note.",
+              "+New note.",
+              "",
+            ].join("\n"),
+          }),
+        ).rejects.toThrow(
+          'Malformed patch at line 3: "@@ -1 +1". Expected unified diff hunk header like "@@ -1,2 +1,2 @@".',
+        );
+      });
+
       it("SHOULD reject multi-file patches", async () => {
         const config = await createFixture("multi-file");
         await writeFile(
@@ -624,7 +645,7 @@ describe("GIVEN a vault patch service", () => {
             ].join("\n"),
           }),
         ).rejects.toThrow(
-          "Patch contains unsupported trailing or metadata text",
+          'Malformed patch at line 6: "Please apply this change."',
         );
       });
 
