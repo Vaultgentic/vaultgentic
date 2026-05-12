@@ -1,5 +1,13 @@
 # @vaultgentic/mcp-server
 
+## 0.0.7
+
+### Patch Changes
+
+- 57bae01: Improve vaultgentic_patch unified diff support for GNU unified diffs and git-style patch wrappers while preserving single-note safety diagnostics.
+- Updated dependencies [57bae01]
+  - @vaultgentic/core@0.0.6
+
 ## 0.0.6
 
 ### Patch Changes
