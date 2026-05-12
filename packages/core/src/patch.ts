@@ -33,6 +33,7 @@ export class VaultPatchError extends VaultgenticError {
 const indexingFailedWarning =
   "Note was patched, but indexing failed. Search results may be stale.";
 const hunkHeaderPattern = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: .*)?$/u;
+const combinedDiffHunkHeaderPattern = /^@@@ /u;
 
 export async function patchVaultNote(
   config: SearchDatabaseConfig,
@@ -141,6 +142,18 @@ function parseSinglePatch(
     throw new VaultPatchError("Patch must update an existing markdown file");
   }
 
+  if (hasBooleanPatchFlag(patch, "isRename")) {
+    throw new VaultPatchError("Patch must not rename markdown files");
+  }
+
+  if (hasBooleanPatchFlag(patch, "isCopy")) {
+    throw new VaultPatchError("Patch must not copy markdown files");
+  }
+
+  if (hasBooleanPatchFlag(patch, "isBinary")) {
+    throw new VaultPatchError("Patch must be a text unified diff");
+  }
+
   const oldPath = normalizePatchPath(patch.oldFileName, "old");
   const newPath = normalizePatchPath(patch.newFileName, "new");
   if (oldPath !== newPath) {
@@ -169,6 +182,12 @@ function validateRawPatchText(patchText: string): void {
       continue;
     }
 
+    if (combinedDiffHunkHeaderPattern.test(line)) {
+      throw new VaultPatchError(
+        `Unsupported patch at line ${lineNumber}: ${JSON.stringify(line)}. Combined merge diffs are not supported.`,
+      );
+    }
+
     if (hunkHeaderPattern.test(line)) {
       inHunk = true;
       continue;
@@ -188,6 +207,13 @@ function validateRawPatchText(patchText: string): void {
       continue;
     }
 
+    const unsupportedReason = unsupportedPatchMetadataReason(line);
+    if (unsupportedReason !== undefined) {
+      throw new VaultPatchError(
+        `Unsupported patch at line ${lineNumber}: ${JSON.stringify(line)}. ${unsupportedReason}`,
+      );
+    }
+
     if (isPatchMetadataLine(line)) {
       inHunk = false;
       continue;
@@ -197,6 +223,26 @@ function validateRawPatchText(patchText: string): void {
       `Malformed patch at line ${lineNumber}: ${JSON.stringify(line)}. Expected a unified diff header, hunk header, hunk line starting with " ", "+", or "-", or "\\ No newline at end of file".`,
     );
   }
+}
+
+function unsupportedPatchMetadataReason(line: string): string | undefined {
+  if (line.startsWith("diff --cc ") || line.startsWith("diff --combined ")) {
+    return "Combined merge diffs are not supported.";
+  }
+
+  if (line.startsWith("rename from ") || line.startsWith("rename to ")) {
+    return "Rename patches are not supported.";
+  }
+
+  if (line.startsWith("copy from ") || line.startsWith("copy to ")) {
+    return "Copy patches are not supported.";
+  }
+
+  if (line.startsWith("Binary files ") || line === "GIT binary patch") {
+    return "Binary patches are not supported.";
+  }
+
+  return undefined;
 }
 
 function isPatchMetadataLine(line: string): boolean {
@@ -210,12 +256,16 @@ function isPatchMetadataLine(line: string): boolean {
     /^new file mode \d+$/u.test(line) ||
     /^deleted file mode \d+$/u.test(line) ||
     /^similarity index \d+%$/u.test(line) ||
-    /^dissimilarity index \d+%$/u.test(line) ||
-    line.startsWith("rename from ") ||
-    line.startsWith("rename to ") ||
-    line.startsWith("copy from ") ||
-    line.startsWith("copy to ") ||
-    line.startsWith("Binary files ")
+    /^dissimilarity index \d+%$/u.test(line)
+  );
+}
+
+function hasBooleanPatchFlag(
+  patch: StructuredPatch,
+  flag: "isRename" | "isCopy" | "isBinary",
+): boolean {
+  return (
+    (patch as StructuredPatch & Record<typeof flag, unknown>)[flag] === true
   );
 }
 

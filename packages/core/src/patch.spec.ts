@@ -550,6 +550,99 @@ describe("GIVEN a vault patch service", () => {
         ).rejects.toThrow("Patch must not create or delete files");
       });
 
+      it("SHOULD reject git create patches", async () => {
+        const config = await createFixture("git-create");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: [
+              "diff --git a/alpha.md b/alpha.md",
+              "new file mode 100644",
+              "--- /dev/null",
+              "+++ b/alpha.md",
+              "@@ -0,0 +1 @@",
+              "+New note.",
+              "",
+            ].join("\n"),
+          }),
+        ).rejects.toThrow("Patch must update an existing markdown file");
+      });
+
+      it("SHOULD reject rename-only patches", async () => {
+        const config = await createFixture("rename-only");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: [
+              "diff --git a/alpha.md b/beta.md",
+              "similarity index 100%",
+              "rename from alpha.md",
+              "rename to beta.md",
+              "",
+            ].join("\n"),
+          }),
+        ).rejects.toThrow("Rename patches are not supported");
+      });
+
+      it("SHOULD reject copy-only patches", async () => {
+        const config = await createFixture("copy-only");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: [
+              "diff --git a/alpha.md b/beta.md",
+              "similarity index 100%",
+              "copy from alpha.md",
+              "copy to beta.md",
+              "",
+            ].join("\n"),
+          }),
+        ).rejects.toThrow("Copy patches are not supported");
+      });
+
+      it("SHOULD reject binary patches", async () => {
+        const config = await createFixture("binary-patch");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: [
+              "diff --git a/alpha.md b/alpha.md",
+              "index 1111111..2222222 100644",
+              "Binary files a/alpha.md and b/alpha.md differ",
+              "",
+            ].join("\n"),
+          }),
+        ).rejects.toThrow("Binary patches are not supported");
+      });
+
+      it("SHOULD reject combined merge diffs", async () => {
+        const config = await createFixture("combined-merge");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: [
+              "diff --cc alpha.md",
+              "--- a/alpha.md",
+              "+++ b/alpha.md",
+              "@@@ -1,1 -1,1 +1,1 @@@",
+              "--Old note.",
+              "++New note.",
+              "",
+            ].join("\n"),
+          }),
+        ).rejects.toThrow("Combined merge diffs are not supported");
+      });
+
       it("SHOULD reject mismatched patch headers", async () => {
         const config = await createFixture("mismatched-headers");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
