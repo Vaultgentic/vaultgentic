@@ -100,12 +100,12 @@ If an agent appears to pause on its first search or index operation, it is likel
 | `vaultgentic_search` | Search indexed vault notes by query, mode, scope, tags, and result limit. |
 | `vaultgentic_read` | Read a vault-relative Markdown note path or indexed chunk id. |
 | `vaultgentic_write` | Create or update an Obsidian-compatible Markdown note. |
-| `vaultgentic_patch` | Patch one existing Markdown note with opencode-style patch text. |
+| `vaultgentic_patch` | Patch one existing Markdown note with Vaultgentic agent patch text. |
 | `vaultgentic_remove` | Remove a Markdown note, archiving by default. |
 
 Search and read refresh the index before responding. Write creates or updates a note and reindexes that file so later searches can find it.
 
-`vaultgentic_patch` accepts one existing note path and opencode-style patch text:
+`vaultgentic_patch` accepts one existing note path and Vaultgentic agent patch text:
 
 ```diff
 *** Begin Patch

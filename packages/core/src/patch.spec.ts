@@ -5,7 +5,11 @@ import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SearchDatabaseConfig } from "./database.js";
 import type { IndexFileResult } from "./indexer.js";
-import { patchVaultNote, VaultPatchError } from "./patch.js";
+import {
+  parseAgentPatchText,
+  patchVaultNote,
+  VaultPatchError,
+} from "./patch.js";
 
 const { indexVaultFileMock } = vi.hoisted(() => ({
   indexVaultFileMock: vi.fn(),
@@ -28,6 +32,153 @@ describe("GIVEN a vault patch service", () => {
         chunkCount: 1,
       }),
     );
+  });
+
+  describe("WHEN agent patch text is parsed", () => {
+    describe("THEN one requested note update is accepted", () => {
+      it("SHOULD parse chunks into context removals and additions", () => {
+        const result = parseAgentPatchText(
+          [
+            "*** Begin Patch",
+            "*** Update File: notes/alpha.md",
+            "@@",
+            " Context line.",
+            "-Old line.",
+            "+New line.",
+            "@@",
+            "-Second old line.",
+            "+Second new line.",
+            "*** End Patch",
+          ].join("\n"),
+          "notes/alpha.md",
+        );
+
+        expect(result).toEqual({
+          path: "notes/alpha.md",
+          chunks: [
+            {
+              lines: [
+                { kind: "context", text: "Context line." },
+                { kind: "remove", text: "Old line." },
+                { kind: "add", text: "New line." },
+              ],
+            },
+            {
+              lines: [
+                { kind: "remove", text: "Second old line." },
+                { kind: "add", text: "Second new line." },
+              ],
+            },
+          ],
+        });
+      });
+
+      it("SHOULD parse heredoc-wrapped patch text", () => {
+        const result = parseAgentPatchText(
+          [
+            "cat <<'EOF'",
+            "*** Begin Patch",
+            "*** Update File: alpha.md",
+            "@@",
+            "-old",
+            "+new",
+            "*** End Patch",
+            "EOF",
+          ].join("\n"),
+          "alpha.md",
+        );
+
+        expect(result.path).toBe("alpha.md");
+        expect(result.chunks).toHaveLength(1);
+      });
+    });
+
+    describe("THEN invalid patch shapes are rejected", () => {
+      it.each([
+        {
+          name: "empty patches",
+          patch: "   \n",
+          error: "Patch must be a non-empty string",
+        },
+        {
+          name: "missing begin marker",
+          patch: [
+            "*** Update File: alpha.md",
+            "@@",
+            "-old",
+            "+new",
+            "*** End Patch",
+          ].join("\n"),
+          error: "Patch must start with *** Begin Patch",
+        },
+        {
+          name: "missing end marker",
+          patch: [
+            "*** Begin Patch",
+            "*** Update File: alpha.md",
+            "@@",
+            "-old",
+            "+new",
+          ].join("\n"),
+          error: "Patch must end with *** End Patch",
+        },
+        {
+          name: "Add File operations",
+          patch: [
+            "*** Begin Patch",
+            "*** Add File: alpha.md",
+            "+new",
+            "*** End Patch",
+          ].join("\n"),
+          error: "Patch must contain exactly one Update File operation",
+        },
+        {
+          name: "multi-operation patches",
+          patch: [
+            "*** Begin Patch",
+            "*** Update File: alpha.md",
+            "@@",
+            "-old",
+            "+new",
+            "*** Update File: beta.md",
+            "@@",
+            "-old",
+            "+new",
+            "*** End Patch",
+          ].join("\n"),
+          error: "Patch must contain exactly one Update File operation",
+        },
+        {
+          name: "malformed chunks",
+          patch: [
+            "*** Begin Patch",
+            "*** Update File: alpha.md",
+            "-old",
+            "+new",
+            "*** End Patch",
+          ].join("\n"),
+          error: "expected @@ chunk marker",
+        },
+      ])("SHOULD reject $name", ({ patch, error }) => {
+        expect(() => parseAgentPatchText(patch, "alpha.md")).toThrow(error);
+      });
+
+      it("SHOULD reject path mismatches", () => {
+        expect(() =>
+          parseAgentPatchText(
+            [
+              "*** Begin Patch",
+              "*** Update File: beta.md",
+              "@@",
+              "-old",
+              "+new",
+              "*** End Patch",
+            ].join("\n"),
+            "alpha.md",
+          ),
+        ).toThrow("Patch headers must match the requested path");
+      });
+    });
   });
 
   describe("WHEN a strict unified diff is applied", () => {

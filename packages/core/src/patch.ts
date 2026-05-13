@@ -23,6 +23,20 @@ export type PatchVaultNoteResult = {
   warning?: string;
 };
 
+export type ParsedPatchLine = {
+  kind: "context" | "remove" | "add";
+  text: string;
+};
+
+export type ParsedPatchChunk = {
+  lines: ParsedPatchLine[];
+};
+
+export type ParsedVaultPatch = {
+  path: string;
+  chunks: ParsedPatchChunk[];
+};
+
 export class VaultPatchError extends VaultgenticError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
@@ -34,6 +48,14 @@ const indexingFailedWarning =
   "Note was patched, but indexing failed. Search results may be stale.";
 const hunkHeaderPattern = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: .*)?$/u;
 const combinedDiffHunkHeaderPattern = /^@@@ /u;
+const beginPatchMarker = "*** Begin Patch";
+const endPatchMarker = "*** End Patch";
+const updateFilePrefix = "*** Update File: ";
+const unsupportedAgentPatchOperations = [
+  "*** Add File: ",
+  "*** Delete File: ",
+  "*** Move to: ",
+];
 
 export async function patchVaultNote(
   config: SearchDatabaseConfig,
@@ -109,6 +131,145 @@ export async function patchVaultNote(
       { cause: error },
     );
   }
+}
+
+export function parseAgentPatchText(
+  patchText: string,
+  relativePath: string,
+): ParsedVaultPatch {
+  const normalizedPatchText = unwrapPatchText(patchText);
+  if (normalizedPatchText.trim() === "") {
+    throw new VaultPatchError("Patch must be a non-empty string");
+  }
+
+  const lines = normalizedPatchText.replaceAll("\r\n", "\n").split("\n");
+  if (lines.at(0) !== beginPatchMarker) {
+    throw new VaultPatchError("Patch must start with *** Begin Patch");
+  }
+
+  if (lines.at(-1) === "") {
+    lines.pop();
+  }
+
+  if (lines.at(-1) !== endPatchMarker) {
+    throw new VaultPatchError("Patch must end with *** End Patch");
+  }
+
+  const operationLines = lines.filter((line) => line.startsWith("*** "));
+  const updateLines = operationLines.filter((line) =>
+    line.startsWith(updateFilePrefix),
+  );
+
+  if (updateLines.length !== 1) {
+    throw new VaultPatchError(
+      "Patch must contain exactly one Update File operation",
+    );
+  }
+
+  for (const line of operationLines) {
+    if (line === beginPatchMarker || line === endPatchMarker) {
+      continue;
+    }
+
+    if (line.startsWith(updateFilePrefix)) {
+      continue;
+    }
+
+    if (
+      unsupportedAgentPatchOperations.some((prefix) => line.startsWith(prefix))
+    ) {
+      throw new VaultPatchError("Patch must update one existing markdown file");
+    }
+
+    throw new VaultPatchError(`Unsupported patch operation: ${line}`);
+  }
+
+  const patchPath = updateLines[0].slice(updateFilePrefix.length);
+  if (patchPath !== relativePath) {
+    throw new VaultPatchError("Patch headers must match the requested path");
+  }
+
+  const updateIndex = lines.indexOf(updateLines[0]);
+  const endIndex = lines.lastIndexOf(endPatchMarker);
+  const chunks = parseAgentPatchChunks(lines.slice(updateIndex + 1, endIndex));
+  if (chunks.length === 0) {
+    throw new VaultPatchError("Patch must contain at least one chunk");
+  }
+
+  return { path: patchPath, chunks };
+}
+
+function parseAgentPatchChunks(lines: string[]): ParsedPatchChunk[] {
+  const chunks: ParsedPatchChunk[] = [];
+  let currentChunk: ParsedPatchChunk | undefined;
+
+  for (const [index, line] of lines.entries()) {
+    const lineNumber = index + 1;
+    if (line.startsWith("@@")) {
+      if (currentChunk !== undefined) {
+        validateChunk(currentChunk);
+        chunks.push(currentChunk);
+      }
+
+      currentChunk = { lines: [] };
+      continue;
+    }
+
+    if (currentChunk === undefined) {
+      throw new VaultPatchError(
+        `Malformed patch at line ${lineNumber}: expected @@ chunk marker`,
+      );
+    }
+
+    const marker = line.at(0);
+    if (marker !== " " && marker !== "-" && marker !== "+") {
+      throw new VaultPatchError(
+        `Malformed patch at line ${lineNumber}: chunk lines must start with space, -, or +`,
+      );
+    }
+
+    currentChunk.lines.push({
+      kind: marker === " " ? "context" : marker === "-" ? "remove" : "add",
+      text: line.slice(1),
+    });
+  }
+
+  if (currentChunk !== undefined) {
+    validateChunk(currentChunk);
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+function validateChunk(chunk: ParsedPatchChunk): void {
+  if (chunk.lines.length === 0) {
+    throw new VaultPatchError("Patch chunks must contain at least one line");
+  }
+
+  if (
+    !chunk.lines.some((line) => line.kind === "remove" || line.kind === "add")
+  ) {
+    throw new VaultPatchError(
+      "Patch chunks must add or remove at least one line",
+    );
+  }
+}
+
+function unwrapPatchText(patchText: string): string {
+  const trimmed = patchText.trim();
+  const lines = trimmed.split(/\r?\n/u);
+
+  if (lines[0]?.startsWith("```") && lines.at(-1) === "```") {
+    return lines.slice(1, -1).join("\n");
+  }
+
+  const heredocMatch = lines[0]?.match(/^cat\s+<<["']?([A-Za-z0-9_]+)["']?$/u);
+  if (heredocMatch !== null && lines.at(-1) === heredocMatch[1]) {
+    return lines.slice(1, -1).join("\n");
+  }
+
+  return trimmed;
 }
 
 function parseSinglePatch(

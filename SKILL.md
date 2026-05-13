@@ -13,7 +13,7 @@ Vaultgentic exposes a markdown vault via MCP tools. Use them proactively — sea
 - `vaultgentic:vaultgentic_search` — search indexed notes by query, mode, scope, or tags
 - `vaultgentic:vaultgentic_read` — read a note by vault-relative path or a chunk by ID
 - `vaultgentic:vaultgentic_write` — create or replace a `.md` note. `body`, `frontmatter`, `tags`, and `aliases` are separate parameters — pass structured frontmatter, do not embed YAML in `body`
-- `vaultgentic:vaultgentic_patch` — apply an opencode-style patch to one existing note. Use `*** Begin Patch`, exactly one `*** Update File: <path>` matching the tool `path`, `@@` chunks with context lines prefixed by space, removals with `-`, additions with `+`, and `*** End Patch`. Add, delete, move, path mismatch, and multi-operation patches are unsupported. Read first, then pass `expectedFileHash` from the read for concurrency safety; on hash mismatch or failed matching, re-read and regenerate the patch
+- `vaultgentic:vaultgentic_patch` — apply a Vaultgentic agent patch to one existing note. Use `*** Begin Patch`, exactly one `*** Update File: <path>` matching the tool `path`, `@@` chunks with context lines prefixed by space, removals with `-`, additions with `+`, and `*** End Patch`. Add, delete, move, path mismatch, and multi-operation patches are unsupported. Read first, then pass `expectedFileHash` from the read for concurrency safety; on hash mismatch or failed matching, re-read and regenerate the patch
 - `vaultgentic:vaultgentic_remove` — remove a note. Pass `expectedFileHash`; surface the response's `operation` (archived/deleted) and any `archivedPath`
 
 ## When to act

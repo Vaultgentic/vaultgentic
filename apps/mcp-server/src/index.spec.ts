@@ -787,7 +787,7 @@ describe("GIVEN the MCP server skeleton", () => {
           refreshThrottleMs: 0,
           search: searchVaultFromSource,
         });
-        const client = new Client({ name: "opencode", version: "test" });
+        const client = new Client({ name: "agent-client", version: "test" });
         const [clientTransport, serverTransport] =
           InMemoryTransport.createLinkedPair();
         await mcpServer.server.connect(serverTransport);
@@ -950,7 +950,7 @@ describe("GIVEN the MCP server skeleton", () => {
         ).toContain("body excludes frontmatter");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
-        ).toContain("opencode-style patch");
+        ).toContain("Vaultgentic agent patch");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
         ).toContain("*** Update File: <path>");
