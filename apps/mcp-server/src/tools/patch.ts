@@ -24,7 +24,7 @@ export const patchToolInputSchema = z.object({
       message: "patch must be a non-empty string",
     })
     .describe(
-      "Unified diff to apply. Supports GNU unified diff and git-style patch wrappers for one existing markdown note.",
+      "Opencode-style patch text for one existing markdown note. Use *** Begin Patch, exactly one *** Update File: <path>, one or more @@ chunks with context lines prefixed by space, removals with -, additions with +, then *** End Patch. Add File, Delete File, Move to, multi-operation patches, and path mismatches are unsupported.",
     ),
   expectedFileHash: z
     .string()

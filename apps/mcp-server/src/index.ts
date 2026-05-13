@@ -116,7 +116,7 @@ const writeToolDescription =
   "Create or replace a vault note at a vault-relative .md path. This is a whole-note replacement; read first when preserving existing content frontmatter or links matters. body excludes frontmatter; optional frontmatter tags and aliases are serialized into the note. Returns metadata only and does not echo note content.";
 
 const patchToolDescription =
-  "Apply a strict unified diff to an existing vault note. Read the note first to get exact content and fileHash, then pass expectedFileHash for concurrency safety. On hash mismatch re-read and regenerate the patch from fresh content. Returns metadata only and does not echo patch or note content.";
+  "Apply an opencode-style patch to one existing vault note. Patch text must use *** Begin Patch, exactly one *** Update File: <path> matching the tool path, one or more @@ chunks, context lines prefixed by space, removals with -, additions with +, and *** End Patch. Add File, Delete File, Move to, multi-operation patches, and path mismatches are unsupported. Read the note first to get exact content and fileHash, then pass expectedFileHash for concurrency safety. On hash mismatch re-read and regenerate the patch from fresh content. Returns metadata only and does not echo patch or note content.";
 
 function createRemoveToolDescription(
   config: Awaited<ReturnType<typeof loadMcpServerConfig>>,

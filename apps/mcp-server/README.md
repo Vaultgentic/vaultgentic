@@ -100,8 +100,24 @@ If an agent appears to pause on its first search or index operation, it is likel
 | `vaultgentic_search` | Search indexed vault notes by query, mode, scope, tags, and result limit. |
 | `vaultgentic_read` | Read a vault-relative Markdown note path or indexed chunk id. |
 | `vaultgentic_write` | Create or update an Obsidian-compatible Markdown note. |
+| `vaultgentic_patch` | Patch one existing Markdown note with opencode-style patch text. |
+| `vaultgentic_remove` | Remove a Markdown note, archiving by default. |
 
 Search and read refresh the index before responding. Write creates or updates a note and reindexes that file so later searches can find it.
+
+`vaultgentic_patch` accepts one existing note path and opencode-style patch text:
+
+```diff
+*** Begin Patch
+*** Update File: notes/example.md
+@@
+ Existing context line
+-Old line
++New line
+*** End Patch
+```
+
+Patch text must contain exactly one `*** Update File: <path>` operation that matches the tool `path`, one or more `@@` chunks, context lines prefixed by a space, removed lines prefixed by `-`, added lines prefixed by `+`, and the begin/end markers. `Add File`, `Delete File`, `Move to`, multiple file operations, path mismatches, and creating missing notes are unsupported. Read first and pass `expectedFileHash` when possible so stale edits are rejected safely.
 
 ## Troubleshooting
 

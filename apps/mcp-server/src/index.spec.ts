@@ -950,7 +950,10 @@ describe("GIVEN the MCP server skeleton", () => {
         ).toContain("body excludes frontmatter");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
-        ).toContain("strict unified diff");
+        ).toContain("opencode-style patch");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
+        ).toContain("*** Update File: <path>");
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_patch"),
         ).toContain("pass expectedFileHash");

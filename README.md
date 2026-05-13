@@ -15,7 +15,7 @@ Vaultgentic gives local agents and terminals a searchable view of an Obsidian-st
 - Indexes Markdown notes into a local SQLite database.
 - Searches by full-text keywords, note titles and aliases, semantic meaning, or hybrid ranking.
 - Reads notes and indexed chunks with optional metadata.
-- Lets MCP agents create or update Obsidian-compatible Markdown notes.
+- Lets MCP agents create, patch, or remove Obsidian-compatible Markdown notes.
 - Keeps all vault content local.
 
 Semantic and hybrid search use the `Xenova/all-MiniLM-L6-v2` embedding model. The first index or semantic search may download and load model files; later runs reuse the local cache.

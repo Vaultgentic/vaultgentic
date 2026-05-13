@@ -139,7 +139,7 @@ describe("GIVEN the MCP patch tool", () => {
 });
 
 function createPatchText(path: string, replacement = "Updated body"): string {
-  return `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-Old body\n+${replacement}\n`;
+  return `*** Begin Patch\n*** Update File: ${path}\n@@\n-Old body\n+${replacement}\n*** End Patch\n`;
 }
 
 function createPatchResult(options: {
