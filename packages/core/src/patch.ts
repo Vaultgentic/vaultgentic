@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { applyPatch, parsePatch, type StructuredPatch } from "diff";
 import type { SearchDatabaseConfig } from "./database.js";
 import { VaultgenticError } from "./errors.js";
 import { indexVaultFile } from "./indexer.js";
@@ -46,8 +45,6 @@ export class VaultPatchError extends VaultgenticError {
 
 const indexingFailedWarning =
   "Note was patched, but indexing failed. Search results may be stale.";
-const hunkHeaderPattern = /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?: .*)?$/u;
-const combinedDiffHunkHeaderPattern = /^@@@ /u;
 const beginPatchMarker = "*** Begin Patch";
 const endPatchMarker = "*** End Patch";
 const updateFilePrefix = "*** Update File: ";
@@ -87,15 +84,8 @@ export async function patchVaultNote(
     }
 
     verifyExpectedFileHash(existingMarkdown, options.expectedFileHash);
-    const patch = parseSinglePatch(options.patch, relativePath);
-    const patchedMarkdown = applyPatch(existingMarkdown, patch, {
-      fuzzFactor: 0,
-      autoConvertLineEndings: false,
-    });
-
-    if (patchedMarkdown === false) {
-      throw new VaultPatchError("Patch hunks did not apply cleanly");
-    }
+    const patch = parseAgentPatchText(options.patch, relativePath);
+    const patchedMarkdown = applyAgentPatch(existingMarkdown, patch);
 
     if (patchedMarkdown === existingMarkdown) {
       throw new VaultPatchError("Patch must change the markdown note");
@@ -256,6 +246,140 @@ function validateChunk(chunk: ParsedPatchChunk): void {
   }
 }
 
+function applyAgentPatch(markdown: string, patch: ParsedVaultPatch): string {
+  const { lines, lineEnding, hasFinalNewline } = splitMarkdown(markdown);
+  const replacements = patch.chunks.map((chunk) =>
+    findChunkReplacement(lines, chunk),
+  );
+  ensureReplacementsDoNotOverlap(replacements);
+
+  const patchedLines = [...lines];
+  for (const replacement of replacements.sort(
+    (left, right) => right.start - left.start,
+  )) {
+    patchedLines.splice(
+      replacement.start,
+      replacement.deleteCount,
+      ...replacement.addedLines,
+    );
+  }
+
+  return joinMarkdown(patchedLines, lineEnding, hasFinalNewline);
+}
+
+function splitMarkdown(markdown: string): {
+  lines: string[];
+  lineEnding: "\n" | "\r\n";
+  hasFinalNewline: boolean;
+} {
+  const lineEnding = markdown.includes("\r\n") ? "\r\n" : "\n";
+  const hasFinalNewline = markdown.endsWith("\n");
+  if (markdown === "") {
+    return { lines: [], lineEnding, hasFinalNewline };
+  }
+
+  const normalized = markdown.replaceAll("\r\n", "\n");
+  const lines = normalized.split("\n");
+
+  if (hasFinalNewline) {
+    lines.pop();
+  }
+
+  return { lines, lineEnding, hasFinalNewline };
+}
+
+function joinMarkdown(
+  lines: string[],
+  lineEnding: "\n" | "\r\n",
+  hasFinalNewline: boolean,
+): string {
+  if (lines.length === 0) {
+    return "";
+  }
+
+  const content = lines.join(lineEnding);
+  return hasFinalNewline ? `${content}${lineEnding}` : content;
+}
+
+function findChunkReplacement(
+  markdownLines: string[],
+  chunk: ParsedPatchChunk,
+): { start: number; deleteCount: number; addedLines: string[] } {
+  const oldLines = chunk.lines
+    .filter((line) => line.kind === "context" || line.kind === "remove")
+    .map((line) => line.text);
+  const addedLines = chunk.lines
+    .filter((line) => line.kind === "context" || line.kind === "add")
+    .map((line) => line.text);
+
+  const start = findOldLines(markdownLines, oldLines);
+  return { start, deleteCount: oldLines.length, addedLines };
+}
+
+function findOldLines(markdownLines: string[], oldLines: string[]): number {
+  if (oldLines.length === 0) {
+    if (markdownLines.length === 0) {
+      return 0;
+    }
+
+    throw new VaultPatchError(
+      "Patch insertion-only chunks must include context for non-empty notes",
+    );
+  }
+
+  const matches: number[] = [];
+
+  for (
+    let index = 0;
+    index <= markdownLines.length - oldLines.length;
+    index += 1
+  ) {
+    if (
+      oldLines.every((line, offset) => markdownLines[index + offset] === line)
+    ) {
+      matches.push(index);
+    }
+  }
+
+  if (matches.length === 0) {
+    throw new VaultPatchError(
+      `Patch old lines were not found: ${JSON.stringify(oldLines.join("\n"))}`,
+    );
+  }
+
+  if (matches.length > 1) {
+    throw new VaultPatchError(
+      "Patch old lines matched multiple locations; add context to disambiguate",
+    );
+  }
+
+  return matches[0];
+}
+
+function ensureReplacementsDoNotOverlap(
+  replacements: Array<{ start: number; deleteCount: number }>,
+): void {
+  const sorted = [...replacements].sort(
+    (left, right) => left.start - right.start,
+  );
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const previous = sorted[index - 1];
+    const current = sorted[index];
+    if (previous.start === current.start && previous.deleteCount === 0) {
+      throw new VaultPatchError(
+        "Patch insertion-only chunks must target distinct locations",
+      );
+    }
+
+    if (previous.start + previous.deleteCount > current.start) {
+      throw new VaultPatchError(
+        "Patch chunks must not modify overlapping old lines",
+      );
+    }
+  }
+}
+
 function unwrapPatchText(patchText: string): string {
   const trimmed = patchText.trim();
   const lines = trimmed.split(/\r?\n/u);
@@ -270,183 +394,6 @@ function unwrapPatchText(patchText: string): string {
   }
 
   return trimmed;
-}
-
-function parseSinglePatch(
-  patchText: string,
-  relativePath: string,
-): StructuredPatch {
-  // Append \n so that a blank context line at the end of the last hunk is
-  // never the final element of split("\n"), which the diff library rejects.
-  const normalizedPatchText = `${patchText}\n`;
-  validateRawPatchText(normalizedPatchText);
-
-  let patches: StructuredPatch[];
-  try {
-    patches = parsePatch(normalizedPatchText);
-  } catch (error) {
-    throw new VaultPatchError(`Malformed patch: ${errorMessage(error)}`, {
-      cause: error,
-    });
-  }
-
-  if (patches.length !== 1) {
-    throw new VaultPatchError("Patch must target exactly one markdown file");
-  }
-
-  const patch = patches[0];
-  if (patch.hunks.length === 0) {
-    throw new VaultPatchError("Patch must contain at least one hunk");
-  }
-
-  if (patch.isCreate === true || patch.isDelete === true) {
-    throw new VaultPatchError("Patch must update an existing markdown file");
-  }
-
-  if (hasBooleanPatchFlag(patch, "isRename")) {
-    throw new VaultPatchError("Patch must not rename markdown files");
-  }
-
-  if (hasBooleanPatchFlag(patch, "isCopy")) {
-    throw new VaultPatchError("Patch must not copy markdown files");
-  }
-
-  if (hasBooleanPatchFlag(patch, "isBinary")) {
-    throw new VaultPatchError("Patch must be a text unified diff");
-  }
-
-  const oldPath = normalizePatchPath(patch.oldFileName, "old");
-  const newPath = normalizePatchPath(patch.newFileName, "new");
-  if (oldPath !== newPath) {
-    throw new VaultPatchError("Patch old and new file headers must match");
-  }
-
-  if (oldPath !== relativePath) {
-    throw new VaultPatchError("Patch headers must match the requested path");
-  }
-
-  return patch;
-}
-
-function validateRawPatchText(patchText: string): void {
-  if (typeof patchText !== "string" || patchText.trim() === "") {
-    throw new VaultPatchError("Patch must be a non-empty string");
-  }
-
-  let inHunk = false;
-  const lines = patchText.split("\n");
-  for (const [index, rawLine] of lines.entries()) {
-    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
-    const lineNumber = index + 1;
-
-    if (line === "") {
-      continue;
-    }
-
-    if (combinedDiffHunkHeaderPattern.test(line)) {
-      throw new VaultPatchError(
-        `Unsupported patch at line ${lineNumber}: ${JSON.stringify(line)}. Combined merge diffs are not supported.`,
-      );
-    }
-
-    if (hunkHeaderPattern.test(line)) {
-      inHunk = true;
-      continue;
-    }
-
-    if (line.startsWith("@@")) {
-      throw new VaultPatchError(
-        `Malformed patch at line ${lineNumber}: ${JSON.stringify(line)}. Expected unified diff hunk header like "@@ -1,2 +1,2 @@".`,
-      );
-    }
-
-    if (inHunk && /^[ +\\-]/u.test(line)) {
-      continue;
-    }
-
-    if (inHunk && line.startsWith("\\ No newline at end of file")) {
-      continue;
-    }
-
-    const unsupportedReason = unsupportedPatchMetadataReason(line);
-    if (unsupportedReason !== undefined) {
-      throw new VaultPatchError(
-        `Unsupported patch at line ${lineNumber}: ${JSON.stringify(line)}. ${unsupportedReason}`,
-      );
-    }
-
-    if (isPatchMetadataLine(line)) {
-      inHunk = false;
-      continue;
-    }
-
-    throw new VaultPatchError(
-      `Malformed patch at line ${lineNumber}: ${JSON.stringify(line)}. Expected a unified diff header, hunk header, hunk line starting with " ", "+", or "-", or "\\ No newline at end of file".`,
-    );
-  }
-}
-
-function unsupportedPatchMetadataReason(line: string): string | undefined {
-  if (line.startsWith("diff --cc ") || line.startsWith("diff --combined ")) {
-    return "Combined merge diffs are not supported.";
-  }
-
-  if (line.startsWith("rename from ") || line.startsWith("rename to ")) {
-    return "Rename patches are not supported.";
-  }
-
-  if (line.startsWith("copy from ") || line.startsWith("copy to ")) {
-    return "Copy patches are not supported.";
-  }
-
-  if (line.startsWith("Binary files ") || line === "GIT binary patch") {
-    return "Binary patches are not supported.";
-  }
-
-  return undefined;
-}
-
-function isPatchMetadataLine(line: string): boolean {
-  return (
-    line.startsWith("diff --git ") ||
-    line.startsWith("index ") ||
-    line.startsWith("--- ") ||
-    line.startsWith("+++ ") ||
-    /^old mode \d+$/u.test(line) ||
-    /^new mode \d+$/u.test(line) ||
-    /^new file mode \d+$/u.test(line) ||
-    /^deleted file mode \d+$/u.test(line) ||
-    /^similarity index \d+%$/u.test(line) ||
-    /^dissimilarity index \d+%$/u.test(line)
-  );
-}
-
-function hasBooleanPatchFlag(
-  patch: StructuredPatch,
-  flag: "isRename" | "isCopy" | "isBinary",
-): boolean {
-  return (
-    (patch as StructuredPatch & Record<typeof flag, unknown>)[flag] === true
-  );
-}
-
-function normalizePatchPath(
-  patchPath: string | undefined,
-  label: "old" | "new",
-): string {
-  if (patchPath === undefined) {
-    throw new VaultPatchError(`Patch ${label} file header is required`);
-  }
-
-  if (patchPath === "/dev/null") {
-    throw new VaultPatchError("Patch must not create or delete files");
-  }
-
-  if (patchPath.startsWith("a/") || patchPath.startsWith("b/")) {
-    return patchPath.slice(2);
-  }
-
-  return patchPath;
 }
 
 function verifyExpectedFileHash(

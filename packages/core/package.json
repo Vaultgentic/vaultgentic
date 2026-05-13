@@ -46,7 +46,6 @@
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
     "better-sqlite3": "^12.9.0",
-    "diff": "^9.0.0",
     "gray-matter": "^4.0.3",
     "minimatch": "^10.2.5",
     "sqlite-vec": "^0.1.9",

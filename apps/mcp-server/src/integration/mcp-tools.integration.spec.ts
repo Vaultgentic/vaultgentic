@@ -808,7 +808,8 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
           });
           expect(conflictResult.isError).toBe(true);
           expect(readToolJson<ErrorToolJson>(conflictResult)).toMatchObject({
-            message: "Patch hunks did not apply cleanly",
+            message:
+              'Patch old lines were not found: "line that is not present."',
           });
           expect(missingResult.isError).toBe(true);
           expect(readToolJson<ErrorToolJson>(missingResult)).toMatchObject({
@@ -841,8 +842,7 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
             {
               input: {
                 path: "patchable.md",
-                patch:
-                  "--- a/patchable.md\n+++ b/patchable.md\n@@ -1 +1 @@\n # Patchable\n",
+                patch: createNoOpPatchText("patchable.md", "# Patchable"),
               },
               message: "Patch must change the markdown note",
             },
@@ -850,7 +850,7 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
               input: {
                 path: "created.md",
                 patch:
-                  "--- /dev/null\n+++ b/created.md\n@@ -0,0 +1 @@\n+created\n",
+                  "*** Begin Patch\n*** Add File: created.md\n+created\n*** End Patch",
               },
               message: "Patch path must be an existing markdown file",
             },
@@ -858,9 +858,9 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
               input: {
                 path: "patchable.md",
                 patch:
-                  "--- a/patchable.md\n+++ /dev/null\n@@ -1 +0,0 @@\n-# Patchable\n",
+                  "*** Begin Patch\n*** Delete File: patchable.md\n*** End Patch",
               },
-              message: "Patch must not create or delete files",
+              message: "Patch must contain exactly one Update",
             },
             {
               input: {
@@ -871,7 +871,7 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
                   "updated.",
                 )}\n${createPatchText("other.md", "old", "new")}`,
               },
-              message: "Patch must target exactly one markdown file",
+              message: "Patch must contain exactly one Update",
             },
             {
               input: {
@@ -883,9 +883,9 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
             {
               input: {
                 path: "patchable.md",
-                patch: "not a diff",
+                patch: "not a patch",
               },
-              message: "Malformed patch at line 1",
+              message: "Patch must start with *** Begin Patch",
             },
           ];
 
@@ -1002,5 +1002,23 @@ function createPatchText(
   oldLine: string,
   newLine: string,
 ): string {
-  return `--- a/${filePath}\n+++ b/${filePath}\n@@ -3 +3 @@\n-${oldLine}\n+${newLine}\n`;
+  return [
+    "*** Begin Patch",
+    `*** Update File: ${filePath}`,
+    "@@",
+    `-${oldLine}`,
+    `+${newLine}`,
+    "*** End Patch",
+  ].join("\n");
+}
+
+function createNoOpPatchText(filePath: string, line: string): string {
+  return [
+    "*** Begin Patch",
+    `*** Update File: ${filePath}`,
+    "@@",
+    `-${line}`,
+    `+${line}`,
+    "*** End Patch",
+  ].join("\n");
 }

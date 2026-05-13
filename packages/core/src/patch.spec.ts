@@ -19,6 +19,15 @@ vi.mock("./indexer.js", () => ({
   indexVaultFile: indexVaultFileMock,
 }));
 
+const agentPatch = (vaultPath: string, lines: string[]): string =>
+  [
+    "*** Begin Patch",
+    `*** Update File: ${vaultPath}`,
+    "@@",
+    ...lines,
+    "*** End Patch",
+  ].join("\n");
+
 describe("GIVEN a vault patch service", () => {
   beforeEach(() => {
     indexVaultFileMock.mockReset();
@@ -181,7 +190,7 @@ describe("GIVEN a vault patch service", () => {
     });
   });
 
-  describe("WHEN a strict unified diff is applied", () => {
+  describe("WHEN an agent patch is applied", () => {
     describe("THEN the existing markdown note is patched safely", () => {
       it("SHOULD return metadata without exposing markdown contents", async () => {
         const config = await createFixture("success");
@@ -189,14 +198,7 @@ describe("GIVEN a vault patch service", () => {
 
         const result = await patchVaultNote(config, {
           path: "alpha.md",
-          patch: [
-            "--- a/alpha.md",
-            "+++ b/alpha.md",
-            "@@ -1 +1 @@",
-            "-Old note.",
-            "+New note.",
-            "",
-          ].join("\n"),
+          patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
         });
 
         expect(result).toEqual({
@@ -220,14 +222,7 @@ describe("GIVEN a vault patch service", () => {
         await patchVaultNote(config, {
           path: "alpha.md",
           expectedFileHash: hashMarkdown(currentMarkdown),
-          patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1 +1 @@",
-            "-Old note.",
-            "+New note.",
-            "",
-          ].join("\n"),
+          patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
         });
 
         await expect(
@@ -260,14 +255,7 @@ describe("GIVEN a vault patch service", () => {
 
         const result = await patchVaultNote(config, {
           path: "alpha.md",
-          patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1 +1 @@",
-            "-Old note.",
-            "+New note.",
-            "",
-          ].join("\n"),
+          patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
         });
 
         expect(indexVaultFileMock).toHaveBeenCalledWith(config, "alpha.md");
@@ -286,14 +274,7 @@ describe("GIVEN a vault patch service", () => {
 
         const result = await patchVaultNote(config, {
           path: "alpha.md",
-          patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1 +1 @@",
-            "-Old note.",
-            "+New note.",
-            "",
-          ].join("\n"),
+          patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
         });
 
         expect(result).toEqual({
@@ -317,8 +298,7 @@ describe("GIVEN a vault patch service", () => {
 
         await patchVaultNote(config, {
           path: "alpha.md",
-          patch:
-            "--- alpha.md\r\n+++ alpha.md\r\n@@ -1,2 +1,2 @@\r\n-one\r\n+uno\r\n two\r\n",
+          patch: agentPatch("alpha.md", ["-one", "+uno", " two"]),
         });
 
         await expect(
@@ -332,20 +312,58 @@ describe("GIVEN a vault patch service", () => {
 
         await patchVaultNote(config, {
           path: "alpha.md",
-          patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1 +1 @@",
-            "-Old note.",
-            "\\ No newline at end of file",
-            "+New note.",
-            "\\ No newline at end of file",
-          ].join("\n"),
+          patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
         });
 
         await expect(
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe("New note.");
+      });
+
+      it("SHOULD delete all content from a newline-terminated note", async () => {
+        const config = await createFixture("delete-all-content");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: agentPatch("alpha.md", ["-Old note."]),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("");
+      });
+
+      it("SHOULD add content to an empty note", async () => {
+        const config = await createFixture("empty-note-insertion");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "");
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: agentPatch("alpha.md", ["+New note."]),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("New note.");
+      });
+
+      it("SHOULD reject insertion-only chunks for non-empty notes", async () => {
+        const config = await createFixture("non-empty-insertion-only");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: agentPatch("alpha.md", ["+New note."]),
+          }),
+        ).rejects.toThrow(
+          "Patch insertion-only chunks must include context for non-empty notes",
+        );
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("Old note.\n");
       });
 
       it("SHOULD apply a patch where a blank context line is the last array element after split", async () => {
@@ -360,15 +378,12 @@ describe("GIVEN a vault patch service", () => {
 
         await patchVaultNote(config, {
           path: "alpha.md",
-          patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1,3 +1,3 @@",
+          patch: agentPatch("alpha.md", [
             " Context line.",
             "-Old line.",
             "+New line.",
-            "",
-          ].join("\n"),
+            " ",
+          ]),
         });
 
         await expect(
@@ -385,16 +400,12 @@ describe("GIVEN a vault patch service", () => {
 
         await patchVaultNote(config, {
           path: "alpha.md",
-          patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1,3 +1,3 @@",
+          patch: agentPatch("alpha.md", [
             " Line one.",
-            "",
+            " ",
             "-Line three.",
             "+Line three (updated).",
-            "",
-          ].join("\n"),
+          ]),
         });
 
         await expect(
@@ -412,15 +423,15 @@ describe("GIVEN a vault patch service", () => {
         await patchVaultNote(config, {
           path: "alpha.md",
           patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1 +1 @@",
+            "*** Begin Patch",
+            "*** Update File: alpha.md",
+            "@@",
             "-First line.",
             "+First line (updated).",
-            "@@ -3 +3 @@",
+            "@@",
             "-Last line.",
             "+Last line (updated).",
-            "",
+            "*** End Patch",
           ].join("\n"),
         });
 
@@ -441,17 +452,17 @@ describe("GIVEN a vault patch service", () => {
         await patchVaultNote(config, {
           path: "alpha.md",
           patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1,2 +1,2 @@",
+            "*** Begin Patch",
+            "*** Update File: alpha.md",
+            "@@",
             "-First section.",
             "+First section (updated).",
-            "",
-            "@@ -4,2 +4,2 @@",
-            "",
+            " ",
+            "@@",
+            " ",
             "-Third section.",
             "+Third section (updated).",
-            "",
+            "*** End Patch",
           ].join("\n"),
         });
 
@@ -472,18 +483,18 @@ describe("GIVEN a vault patch service", () => {
         await patchVaultNote(config, {
           path: "alpha.md",
           patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1,3 +1,3 @@",
+            "*** Begin Patch",
+            "*** Update File: alpha.md",
+            "@@",
             " ---",
             "-title: Old Title",
             "+title: New Title",
             " ---",
-            "@@ -4,2 +4,2 @@",
-            "",
+            "@@",
+            " ",
             "-Body text.",
             "+Updated body text.",
-            "",
+            "*** End Patch",
           ].join("\n"),
         });
 
@@ -492,20 +503,13 @@ describe("GIVEN a vault patch service", () => {
         ).resolves.toBe("---\ntitle: New Title\n---\n\nUpdated body text.\n");
       });
 
-      it("SHOULD apply GNU unified diff headers with timestamps", async () => {
+      it("SHOULD apply a simple agent patch", async () => {
         const config = await createFixture("gnu-timestamps");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
 
         await patchVaultNote(config, {
           path: "alpha.md",
-          patch: [
-            "--- alpha.md\t2026-05-12 10:00:00.000000000 +0000",
-            "+++ alpha.md\t2026-05-12 10:01:00.000000000 +0000",
-            "@@ -1 +1 @@",
-            "-Old note.",
-            "+New note.",
-            "",
-          ].join("\n"),
+          patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
         });
 
         await expect(
@@ -522,16 +526,12 @@ describe("GIVEN a vault patch service", () => {
 
         await patchVaultNote(config, {
           path: "alpha.md",
-          patch: [
-            "--- alpha.md",
-            "+++ alpha.md",
-            "@@ -1,3 +1,3 @@ Heading",
+          patch: agentPatch("alpha.md", [
             " # Heading",
-            "",
+            " ",
             "-Old note.",
             "+New note.",
-            "",
-          ].join("\n"),
+          ]),
         });
 
         await expect(
@@ -548,16 +548,7 @@ describe("GIVEN a vault patch service", () => {
 
         await patchVaultNote(config, {
           path: "alpha note.md",
-          patch: [
-            "diff --git a/alpha note.md b/alpha note.md",
-            "index 1111111..2222222 100644",
-            "--- a/alpha note.md",
-            "+++ b/alpha note.md",
-            "@@ -1 +1 @@",
-            "-Old note.",
-            "+New note.",
-            "",
-          ].join("\n"),
+          patch: agentPatch("alpha note.md", ["-Old note.", "+New note."]),
         });
 
         await expect(
@@ -575,14 +566,7 @@ describe("GIVEN a vault patch service", () => {
         await expect(
           patchVaultNote(config, {
             path: "alpha.md",
-            patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1 @@",
-              "-Old note.",
-              "+New note.",
-              "",
-            ].join("\n"),
+            patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
           }),
         ).rejects.toThrow("Patch path must be an existing markdown file");
       });
@@ -597,16 +581,9 @@ describe("GIVEN a vault patch service", () => {
         await expect(
           patchVaultNote(config, {
             path: "alpha.md",
-            patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1 @@",
-              "-Old note.",
-              "+New note.",
-              "",
-            ].join("\n"),
+            patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
           }),
-        ).rejects.toThrow("Patch hunks did not apply cleanly");
+        ).rejects.toThrow("Patch old lines were not found");
         await expect(
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe("Different.\n");
@@ -620,19 +597,41 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1 @@",
+              "*** Begin Patch",
+              "*** Update File: alpha.md",
+              "@@",
               "-Old note.",
               "+New note.",
-              "+Extra line.",
-              "",
+              "Extra line.",
+              "*** End Patch",
             ].join("\n"),
           }),
         ).rejects.toThrow(VaultPatchError);
         await expect(
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe("Old note.\n");
+      });
+
+      it("SHOULD reject multiple insertion-only chunks for empty notes", async () => {
+        const config = await createFixture("multiple-empty-insertions");
+        await writeFile(path.join(config.vaultPath, "alpha.md"), "");
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: [
+              "*** Begin Patch",
+              "*** Update File: alpha.md",
+              "@@",
+              "+First note.",
+              "@@",
+              "+Second note.",
+              "*** End Patch",
+            ].join("\n"),
+          }),
+        ).rejects.toThrow(
+          "Patch insertion-only chunks must target distinct locations",
+        );
       });
 
       it("SHOULD reject malformed hunk headers with line-aware diagnostics", async () => {
@@ -643,17 +642,14 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1",
+              "*** Begin Patch",
+              "*** Update File: alpha.md",
               "-Old note.",
               "+New note.",
-              "",
+              "*** End Patch",
             ].join("\n"),
           }),
-        ).rejects.toThrow(
-          'Malformed patch at line 3: "@@ -1 +1". Expected unified diff hunk header like "@@ -1,2 +1,2 @@".',
-        );
+        ).rejects.toThrow("expected @@ chunk marker");
       });
 
       it("SHOULD reject multi-file patches", async () => {
@@ -667,23 +663,22 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1 @@",
+              "*** Begin Patch",
+              "*** Update File: alpha.md",
+              "@@",
               "-Old alpha.",
               "+New alpha.",
-              "--- beta.md",
-              "+++ beta.md",
-              "@@ -1 +1 @@",
+              "*** Update File: beta.md",
+              "@@",
               "-Old beta.",
               "+New beta.",
-              "",
+              "*** End Patch",
             ].join("\n"),
           }),
-        ).rejects.toThrow("Patch must target exactly one markdown file");
+        ).rejects.toThrow("Patch must contain exactly one Update");
       });
 
-      it("SHOULD reject create and delete headers", async () => {
+      it("SHOULD reject create operations", async () => {
         const config = await createFixture("dev-null");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
 
@@ -691,17 +686,16 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "--- /dev/null",
-              "+++ alpha.md",
-              "@@ -0,0 +1 @@",
+              "*** Begin Patch",
+              "*** Add File: alpha.md",
               "+New note.",
-              "",
+              "*** End Patch",
             ].join("\n"),
           }),
-        ).rejects.toThrow("Patch must not create or delete files");
+        ).rejects.toThrow("Patch must contain exactly one Update");
       });
 
-      it("SHOULD reject git create patches", async () => {
+      it("SHOULD reject delete operations", async () => {
         const config = await createFixture("git-create");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
 
@@ -709,19 +703,15 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "diff --git a/alpha.md b/alpha.md",
-              "new file mode 100644",
-              "--- /dev/null",
-              "+++ b/alpha.md",
-              "@@ -0,0 +1 @@",
-              "+New note.",
-              "",
+              "*** Begin Patch",
+              "*** Delete File: alpha.md",
+              "*** End Patch",
             ].join("\n"),
           }),
-        ).rejects.toThrow("Patch must update an existing markdown file");
+        ).rejects.toThrow("Patch must contain exactly one Update");
       });
 
-      it("SHOULD reject rename-only patches", async () => {
+      it("SHOULD reject move operations", async () => {
         const config = await createFixture("rename-only");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
 
@@ -729,17 +719,16 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "diff --git a/alpha.md b/beta.md",
-              "similarity index 100%",
-              "rename from alpha.md",
-              "rename to beta.md",
-              "",
+              "*** Begin Patch",
+              "*** Update File: alpha.md",
+              "*** Move to: beta.md",
+              "*** End Patch",
             ].join("\n"),
           }),
-        ).rejects.toThrow("Rename patches are not supported");
+        ).rejects.toThrow("Patch must update one existing markdown file");
       });
 
-      it("SHOULD reject copy-only patches", async () => {
+      it("SHOULD reject unsupported operations", async () => {
         const config = await createFixture("copy-only");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
 
@@ -747,17 +736,16 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "diff --git a/alpha.md b/beta.md",
-              "similarity index 100%",
-              "copy from alpha.md",
-              "copy to beta.md",
-              "",
+              "*** Begin Patch",
+              "*** Update File: alpha.md",
+              "*** Copy to: beta.md",
+              "*** End Patch",
             ].join("\n"),
           }),
-        ).rejects.toThrow("Copy patches are not supported");
+        ).rejects.toThrow("Unsupported patch operation");
       });
 
-      it("SHOULD reject binary patches", async () => {
+      it("SHOULD reject old unified diff patches", async () => {
         const config = await createFixture("binary-patch");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
 
@@ -771,10 +759,10 @@ describe("GIVEN a vault patch service", () => {
               "",
             ].join("\n"),
           }),
-        ).rejects.toThrow("Binary patches are not supported");
+        ).rejects.toThrow("Patch must start with *** Begin Patch");
       });
 
-      it("SHOULD reject combined merge diffs", async () => {
+      it("SHOULD reject malformed chunk lines", async () => {
         const config = await createFixture("combined-merge");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
 
@@ -782,52 +770,25 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "diff --cc alpha.md",
-              "--- a/alpha.md",
-              "+++ b/alpha.md",
-              "@@@ -1,1 -1,1 +1,1 @@@",
-              "--Old note.",
-              "++New note.",
-              "",
+              "*** Begin Patch",
+              "*** Update File: alpha.md",
+              "@@",
+              "Old note.",
+              "+New note.",
+              "*** End Patch",
             ].join("\n"),
           }),
-        ).rejects.toThrow("Combined merge diffs are not supported");
+        ).rejects.toThrow("chunk lines must start with space, -, or +");
       });
 
-      it("SHOULD reject mismatched patch headers", async () => {
+      it("SHOULD reject wrong requested paths", async () => {
         const config = await createFixture("mismatched-headers");
         await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
 
         await expect(
           patchVaultNote(config, {
             path: "alpha.md",
-            patch: [
-              "--- alpha.md",
-              "+++ beta.md",
-              "@@ -1 +1 @@",
-              "-Old note.",
-              "+New note.",
-              "",
-            ].join("\n"),
-          }),
-        ).rejects.toThrow("Patch old and new file headers must match");
-      });
-
-      it("SHOULD reject wrong requested paths", async () => {
-        const config = await createFixture("wrong-path");
-        await writeFile(path.join(config.vaultPath, "alpha.md"), "Old note.\n");
-
-        await expect(
-          patchVaultNote(config, {
-            path: "alpha.md",
-            patch: [
-              "--- beta.md",
-              "+++ beta.md",
-              "@@ -1 +1 @@",
-              "-Old note.",
-              "+New note.",
-              "",
-            ].join("\n"),
+            patch: agentPatch("beta.md", ["-Old note.", "+New note."]),
           }),
         ).rejects.toThrow("Patch headers must match the requested path");
       });
@@ -839,13 +800,7 @@ describe("GIVEN a vault patch service", () => {
         await expect(
           patchVaultNote(config, {
             path: "alpha.md",
-            patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1 @@",
-              " Old note.",
-              "",
-            ].join("\n"),
+            patch: agentPatch("alpha.md", ["-Old note.", "+Old note."]),
           }),
         ).rejects.toThrow("Patch must change the markdown note");
       });
@@ -858,14 +813,7 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             expectedFileHash: hashMarkdown("Different.\n"),
-            patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1 @@",
-              "-Old note.",
-              "+New note.",
-              "",
-            ].join("\n"),
+            patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
           }),
         ).rejects.toThrow("Expected file hash does not match current note");
         expect(indexVaultFileMock).not.toHaveBeenCalled();
@@ -879,18 +827,16 @@ describe("GIVEN a vault patch service", () => {
           patchVaultNote(config, {
             path: "alpha.md",
             patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1 @@",
+              "*** Begin Patch",
+              "*** Update File: alpha.md",
+              "@@",
               "-Old note.",
               "+New note.",
               "Please apply this change.",
-              "",
+              "*** End Patch",
             ].join("\n"),
           }),
-        ).rejects.toThrow(
-          'Malformed patch at line 6: "Please apply this change."',
-        );
+        ).rejects.toThrow("chunk lines must start with space, -, or +");
       });
 
       it("SHOULD reject symlink notes that escape the vault", async () => {
@@ -905,14 +851,7 @@ describe("GIVEN a vault patch service", () => {
         await expect(
           patchVaultNote(config, {
             path: "alpha.md",
-            patch: [
-              "--- alpha.md",
-              "+++ alpha.md",
-              "@@ -1 +1 @@",
-              "-Outside note.",
-              "+Patched note.",
-              "",
-            ].join("\n"),
+            patch: agentPatch("alpha.md", ["-Outside note.", "+Patched note."]),
           }),
         ).rejects.toThrow("Write path parent must stay inside the vault");
         await expect(readFile(outsidePath, "utf8")).resolves.toBe(
@@ -933,14 +872,10 @@ describe("GIVEN a vault patch service", () => {
         await expect(
           patchVaultNote(config, {
             path: "linked/alpha.md",
-            patch: [
-              "--- linked/alpha.md",
-              "+++ linked/alpha.md",
-              "@@ -1 +1 @@",
+            patch: agentPatch("linked/alpha.md", [
               "-Outside note.",
               "+Patched note.",
-              "",
-            ].join("\n"),
+            ]),
           }),
         ).rejects.toThrow("Write path parent must stay inside the vault");
         await expect(

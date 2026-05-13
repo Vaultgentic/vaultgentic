@@ -1174,7 +1174,14 @@ function createWriteResult(options: {
 }
 
 function createPatchText(path: string, replacement = "Updated body"): string {
-  return `--- a/${path}\n+++ b/${path}\n@@ -1 +1 @@\n-Old body\n+${replacement}\n`;
+  return [
+    "*** Begin Patch",
+    `*** Update File: ${path}`,
+    "@@",
+    "-Old body",
+    `+${replacement}`,
+    "*** End Patch",
+  ].join("\n");
 }
 
 function createPatchResult(options: {
