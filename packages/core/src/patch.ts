@@ -308,12 +308,36 @@ function findChunkReplacement(
   const oldLines = chunk.lines
     .filter((line) => line.kind === "context" || line.kind === "remove")
     .map((line) => line.text);
-  const addedLines = chunk.lines
-    .filter((line) => line.kind === "context" || line.kind === "add")
-    .map((line) => line.text);
 
   const start = findOldLines(markdownLines, oldLines);
+  const addedLines = buildAddedLines(markdownLines, start, chunk);
   return { start, deleteCount: oldLines.length, addedLines };
+}
+
+function buildAddedLines(
+  markdownLines: string[],
+  start: number,
+  chunk: ParsedPatchChunk,
+): string[] {
+  const addedLines: string[] = [];
+  let oldLineOffset = 0;
+
+  for (const line of chunk.lines) {
+    if (line.kind === "context") {
+      addedLines.push(markdownLines[start + oldLineOffset]);
+      oldLineOffset += 1;
+      continue;
+    }
+
+    if (line.kind === "remove") {
+      oldLineOffset += 1;
+      continue;
+    }
+
+    addedLines.push(line.text);
+  }
+
+  return addedLines;
 }
 
 function findOldLines(markdownLines: string[], oldLines: string[]): number {
@@ -327,6 +351,49 @@ function findOldLines(markdownLines: string[], oldLines: string[]): number {
     );
   }
 
+  const exactMatches = findMatchingLineRanges(
+    markdownLines,
+    oldLines,
+    (line) => line,
+  );
+
+  if (exactMatches.length === 1) {
+    return exactMatches[0];
+  }
+
+  if (exactMatches.length > 1) {
+    throw new VaultPatchError(
+      "Patch old lines matched multiple locations; add context to disambiguate",
+    );
+  }
+
+  const tolerantMatches = findMatchingLineRanges(
+    markdownLines,
+    oldLines,
+    normalizePatchLineForMatch,
+  );
+
+  if (tolerantMatches.length === 0) {
+    throw new VaultPatchError(
+      `Patch old lines were not found: ${JSON.stringify(oldLines.join("\n"))}`,
+    );
+  }
+
+  if (tolerantMatches.length > 1) {
+    throw new VaultPatchError(
+      "Patch old lines matched multiple locations; add context to disambiguate",
+    );
+  }
+
+  return tolerantMatches[0];
+}
+
+function findMatchingLineRanges(
+  markdownLines: string[],
+  oldLines: string[],
+  normalize: (line: string) => string,
+): number[] {
+  const normalizedOldLines = oldLines.map(normalize);
   const matches: number[] = [];
 
   for (
@@ -335,25 +402,24 @@ function findOldLines(markdownLines: string[], oldLines: string[]): number {
     index += 1
   ) {
     if (
-      oldLines.every((line, offset) => markdownLines[index + offset] === line)
+      normalizedOldLines.every(
+        (line, offset) => normalize(markdownLines[index + offset]) === line,
+      )
     ) {
       matches.push(index);
     }
   }
 
-  if (matches.length === 0) {
-    throw new VaultPatchError(
-      `Patch old lines were not found: ${JSON.stringify(oldLines.join("\n"))}`,
-    );
-  }
+  return matches;
+}
 
-  if (matches.length > 1) {
-    throw new VaultPatchError(
-      "Patch old lines matched multiple locations; add context to disambiguate",
-    );
-  }
-
-  return matches[0];
+function normalizePatchLineForMatch(line: string): string {
+  return line
+    .normalize("NFKC")
+    .replace(/[\u2018\u2019]/gu, "'")
+    .replace(/[\u201C\u201D]/gu, '"')
+    .replace(/[\u2010\u2011\u2012\u2013\u2014\u2212]/gu, "-")
+    .trim();
 }
 
 function ensureReplacementsDoNotOverlap(

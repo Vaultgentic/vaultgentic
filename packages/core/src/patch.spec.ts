@@ -555,6 +555,57 @@ describe("GIVEN a vault patch service", () => {
           readFile(path.join(config.vaultPath, "alpha note.md"), "utf8"),
         ).resolves.toBe("New note.\n");
       });
+
+      it("SHOULD tolerate trailing whitespace in old lines", async () => {
+        const config = await createFixture("trailing-whitespace-tolerance");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "Old note.  \n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("New note.\n");
+      });
+
+      it("SHOULD tolerate indentation differences in old lines", async () => {
+        const config = await createFixture("indentation-tolerance");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "  Old note.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("New note.\n");
+      });
+
+      it("SHOULD tolerate Unicode punctuation differences in old lines", async () => {
+        const config = await createFixture("unicode-punctuation-tolerance");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "Ada’s note — old.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: agentPatch("alpha.md", ["-Ada's note - old.", "+New note."]),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("New note.\n");
+      });
     });
   });
 
@@ -587,6 +638,68 @@ describe("GIVEN a vault patch service", () => {
         await expect(
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe("Different.\n");
+      });
+
+      it("SHOULD reject ambiguous tolerant old-line matches", async () => {
+        const config = await createFixture("ambiguous-tolerant-match");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "  Old note.\nOld note.  \n",
+        );
+
+        await expect(
+          patchVaultNote(config, {
+            path: "alpha.md",
+            patch: agentPatch("alpha.md", ["-Old note.", "+New note."]),
+          }),
+        ).rejects.toThrow(
+          "Patch old lines matched multiple locations; add context to disambiguate",
+        );
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("  Old note.\nOld note.  \n");
+      });
+
+      it("SHOULD allow context to disambiguate tolerant old-line matches", async () => {
+        const config = await createFixture("disambiguated-tolerant-match");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "First\nOld note.  \nSecond\nOld note.  \n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: agentPatch("alpha.md", [
+            " Second",
+            "-Old note.",
+            "+New note.",
+          ]),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("First\nOld note.  \nSecond\nNew note.\n");
+      });
+
+      it("SHOULD preserve context lines that only match tolerantly", async () => {
+        const config = await createFixture("tolerant-context-preserved");
+        await writeFile(
+          path.join(config.vaultPath, "alpha.md"),
+          "  Heading  \nOld note.\n",
+        );
+
+        await patchVaultNote(config, {
+          path: "alpha.md",
+          patch: agentPatch("alpha.md", [
+            " Heading",
+            "-Old note.",
+            "+New note.",
+          ]),
+        });
+
+        await expect(
+          readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
+        ).resolves.toBe("  Heading  \nNew note.\n");
       });
 
       it("SHOULD reject malformed patches", async () => {
