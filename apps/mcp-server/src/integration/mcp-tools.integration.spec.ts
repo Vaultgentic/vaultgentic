@@ -826,6 +826,57 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
         }
       });
 
+      it("SHOULD apply tolerant matches and reject ambiguous tolerant matches", async () => {
+        const fixture = await createIntegrationFixture("patch-tolerant");
+        try {
+          await writeVaultFile(
+            fixture.vaultPath,
+            "tolerant.md",
+            "# Tolerant\n\n  Ada’s note — old.  \n",
+          );
+          await writeVaultFile(
+            fixture.vaultPath,
+            "ambiguous.md",
+            "  repeated line.\nrepeated line.  \n",
+          );
+
+          const tolerantResult = await fixture.callTool("vaultgentic_patch", {
+            path: "tolerant.md",
+            patch: createPatchText(
+              "tolerant.md",
+              "Ada's note - old.",
+              "Ada's note is patched.",
+            ),
+          });
+          const ambiguousResult = await fixture.callTool("vaultgentic_patch", {
+            path: "ambiguous.md",
+            patch: createPatchText(
+              "ambiguous.md",
+              "repeated line.",
+              "patched line.",
+            ),
+          });
+
+          expect(tolerantResult.isError).toBeUndefined();
+          expect(readToolJson<PatchToolJson>(tolerantResult)).toEqual({
+            result: { path: "tolerant.md", indexed: true },
+          });
+          await expect(
+            readFile(path.join(fixture.vaultPath, "tolerant.md"), "utf8"),
+          ).resolves.toBe("# Tolerant\n\nAda's note is patched.\n");
+          expect(ambiguousResult.isError).toBe(true);
+          expect(readToolJson<ErrorToolJson>(ambiguousResult)).toMatchObject({
+            message:
+              "Patch old lines matched multiple locations; add context to disambiguate",
+          });
+          await expect(
+            readFile(path.join(fixture.vaultPath, "ambiguous.md"), "utf8"),
+          ).resolves.toBe("  repeated line.\nrepeated line.  \n");
+        } finally {
+          await fixture.close();
+        }
+      });
+
       it("SHOULD reject no-op create delete multi-file unsafe and malformed patches", async () => {
         const fixture = await createIntegrationFixture("patch-invalid-shapes");
         try {
@@ -861,6 +912,22 @@ describe("GIVEN a temporary vault connected through the MCP client", () => {
                   "*** Begin Patch\n*** Delete File: patchable.md\n*** End Patch",
               },
               message: "Patch must contain exactly one Update",
+            },
+            {
+              input: {
+                path: "patchable.md",
+                patch:
+                  "*** Begin Patch\n*** Update File: patchable.md\n*** Move to: moved.md\n*** End Patch",
+              },
+              message: "Patch must update one existing markdown file",
+            },
+            {
+              input: {
+                path: "patchable.md",
+                patch:
+                  "*** Begin Patch\n*** Update File: patchable.md\n*** Copy to: copied.md\n*** End Patch",
+              },
+              message: "Unsupported patch operation",
             },
             {
               input: {
