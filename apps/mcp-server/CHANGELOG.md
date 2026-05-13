@@ -1,5 +1,16 @@
 # @vaultgentic/mcp-server
 
+## 0.1.0
+
+### Minor Changes
+
+- b1839eb: Change `vaultgentic_patch` from unified diff input to Vaultgentic agent patch text with `*** Begin Patch` / `*** Update File` syntax. The new format keeps the existing single-note safety model while making patch edits easier for agents to generate reliably.
+
+### Patch Changes
+
+- Updated dependencies [b1839eb]
+  - @vaultgentic/core@0.1.0
+
 ## 0.0.7
 
 ### Patch Changes
