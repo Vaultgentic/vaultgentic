@@ -6,6 +6,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { RefreshSearchIndexResult, SearchOutput } from "@vaultgentic/core";
 import type {
+  MoveVaultNoteOptions,
+  MoveVaultNoteResult,
   PatchVaultNoteOptions,
   PatchVaultNoteResult,
   ReadVaultTargetOptions,
@@ -24,6 +26,7 @@ import {
   forbiddenMcpToolNameParts,
   mcpServerPackageName,
   mcpToolPrefix,
+  moveToolInputSchema,
   patchToolInputSchema,
   plannedMcpToolNames,
   readToolInputSchema,
@@ -93,6 +96,7 @@ describe("GIVEN the MCP server skeleton", () => {
           "vaultgentic_write",
           "vaultgentic_patch",
           "vaultgentic_remove",
+          "vaultgentic_move",
         ]);
         expect(
           plannedMcpToolNames.every((name) => name.startsWith(mcpToolPrefix)),
@@ -120,6 +124,12 @@ describe("GIVEN the MCP server skeleton", () => {
         expect(
           removeToolInputSchema.safeParse({ path: "note.md" }).success,
         ).toBe(true);
+        expect(
+          moveToolInputSchema.safeParse({
+            fromPath: "old.md",
+            toPath: "new.md",
+          }).success,
+        ).toBe(true);
       });
 
       it("SHOULD NOT expose sync, file, rebuild, watch, or index tools", async () => {
@@ -144,6 +154,7 @@ describe("GIVEN the MCP server skeleton", () => {
           "vaultgentic_write",
           "vaultgentic_patch",
           "vaultgentic_remove",
+          "vaultgentic_move",
         ]);
         for (const forbiddenNamePart of forbiddenMcpToolNameParts) {
           expect(
@@ -739,6 +750,83 @@ describe("GIVEN the MCP server skeleton", () => {
     });
   });
 
+  describe("WHEN MCP callers move within the vault", () => {
+    describe("THEN vaultgentic_move uses the shared move service", () => {
+      it("SHOULD move notes with metadata only responses", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const moves: MoveVaultNoteOptions[] = [];
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          move: async (_config, options) => {
+            moves.push(options);
+            return createMoveResult(options);
+          },
+        });
+
+        const response = await mcpServer.move({
+          fromPath: "notes/alpha.md",
+          toPath: "notes/beta.md",
+          expectedFileHash:
+            "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          overwrite: true,
+          pruneEmptyParents: false,
+        });
+
+        expect(moves).toEqual([
+          {
+            fromPath: "notes/alpha.md",
+            toPath: "notes/beta.md",
+            expectedFileHash:
+              "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            overwrite: true,
+            pruneEmptyParents: false,
+          },
+        ]);
+        expect(response).toEqual({
+          result: {
+            fromPath: "notes/alpha.md",
+            toPath: "notes/beta.md",
+            moved: true,
+            overwritten: true,
+            prunedDirectories: [],
+          },
+        });
+      });
+
+      it("SHOULD reject invalid move tool input", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({ configPath });
+
+        await expect(
+          mcpServer.move({
+            fromPath: "",
+            toPath: "beta.md",
+            expectedFileHash: "sha256:not-hex",
+          }),
+        ).rejects.toMatchObject({
+          code: "invalid_tool_input",
+          expected: true,
+        });
+      });
+    });
+  });
+
   describe("WHEN MCP callers invoke registered tools", () => {
     describe("THEN registered callbacks return MCP-shaped results", () => {
       it("SHOULD return known search hits through vaultgentic_search", async () => {
@@ -969,6 +1057,12 @@ describe("GIVEN the MCP server skeleton", () => {
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_remove"),
         ).toContain("pruneEmptyParents=false");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_move"),
+        ).toContain("overwrite=true");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_move"),
+        ).toContain("move, not an archive");
       });
 
       it("SHOULD return patch metadata through vaultgentic_patch", async () => {
@@ -1032,6 +1126,43 @@ describe("GIVEN the MCP server skeleton", () => {
             operation: "archived",
             archivedPath: ".vaultgentic/archive/alpha.md",
             indexRemoved: true,
+            prunedDirectories: [],
+          },
+        });
+        expect(result.isError).toBeUndefined();
+      });
+
+      it("SHOULD return move metadata through vaultgentic_move", async () => {
+        const cwd = await mkdtemp(path.join(tmpdir(), "vaultgentic-mcp-"));
+        const vaultPath = path.join(cwd, "vault");
+        const databasePath = path.join(cwd, "index.sqlite");
+        const configPath = path.join(cwd, "config.json");
+        await mkdir(vaultPath);
+        await writeFile(
+          configPath,
+          JSON.stringify({ vaultPath, databasePath }),
+        );
+        const mcpServer = await createVaultgenticMcpServer({
+          configPath,
+          move: async () =>
+            createMoveResult({ fromPath: "alpha.md", toPath: "beta.md" }),
+        });
+
+        const result = await callRegisteredTool(
+          mcpServer.server,
+          "vaultgentic_move",
+          {
+            fromPath: "alpha.md",
+            toPath: "beta.md",
+          },
+        );
+
+        expect(readToolJson(result)).toEqual({
+          result: {
+            fromPath: "alpha.md",
+            toPath: "beta.md",
+            moved: true,
+            overwritten: false,
             prunedDirectories: [],
           },
         });
@@ -1207,6 +1338,16 @@ function createRemoveResult(options: { path: string }): RemoveVaultNoteResult {
     operation: "archived",
     archivedPath: `.vaultgentic/archive/${options.path}`,
     indexRemoved: true,
+    prunedDirectories: [],
+  };
+}
+
+function createMoveResult(options: MoveVaultNoteOptions): MoveVaultNoteResult {
+  return {
+    fromPath: options.fromPath,
+    toPath: options.toPath,
+    moved: true,
+    overwritten: options.overwrite === true,
     prunedDirectories: [],
   };
 }

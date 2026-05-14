@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants } from "node:fs";
-import { copyFile, mkdir, rm, rmdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   defaultArchiveFolder,
@@ -9,6 +8,10 @@ import {
 } from "./config.js";
 import type { SearchDatabaseConfig } from "./database.js";
 import { VaultgenticError } from "./errors.js";
+import {
+  moveFilesystemFile,
+  pruneEmptyParentDirectories as pruneEmptyParentDirectoriesUnchecked,
+} from "./filesystem-move.js";
 import { removeIndexedVaultPath } from "./indexer.js";
 import {
   ensureLeafSymlinkInsideVault,
@@ -134,56 +137,15 @@ async function pruneEmptyParentDirectories(
     return { prunedDirectories: [] };
   }
 
-  const prunedDirectories: string[] = [];
-  let parentRelativePath = path.posix.dirname(relativePath);
-
   try {
-    while (shouldPruneParent(parentRelativePath)) {
-      const absoluteParentPath = path.resolve(
-        config.vaultPath,
-        parentRelativePath,
-      );
-      ensurePathInsideVault(config.vaultPath, absoluteParentPath);
-
-      try {
-        await rmdir(absoluteParentPath);
-      } catch (error) {
-        if (isDirectoryNotEmptyError(error) || isMissingDirectoryError(error)) {
-          break;
-        }
-
-        throw error;
-      }
-
-      prunedDirectories.push(parentRelativePath);
-      parentRelativePath = path.posix.dirname(parentRelativePath);
-    }
-
-    return { prunedDirectories };
-  } catch {
-    return {
-      prunedDirectories,
-      warning: directoryPruningFailedWarning,
-    };
-  }
-}
-
-function shouldPruneParent(relativePath: string): boolean {
-  if (relativePath === "." || relativePath === "") {
-    return false;
-  }
-
-  return relativePath.split("/").length > 1;
-}
-
-function ensurePathInsideVault(vaultPath: string, absolutePath: string): void {
-  const relativePath = path.relative(vaultPath, absolutePath);
-  if (
-    relativePath === "" ||
-    relativePath.startsWith("..") ||
-    path.isAbsolute(relativePath)
-  ) {
-    throw new VaultRemoveError("Pruned directory must stay inside the vault");
+    return await pruneEmptyParentDirectoriesUnchecked({
+      vaultPath: config.vaultPath,
+      relativePath,
+      enabled: options.enabled,
+      failureWarning: directoryPruningFailedWarning,
+    });
+  } catch (error) {
+    throw new VaultRemoveError(directoryPruningFailedWarning, { cause: error });
   }
 }
 
@@ -200,18 +162,12 @@ async function archiveNote(
     archiveAbsolutePath,
     VaultRemoveError,
   );
-  await mkdir(path.dirname(archiveAbsolutePath), { recursive: true });
-  await ensureParentInsideVault(
-    config.vaultPath,
-    archiveAbsolutePath,
-    VaultRemoveError,
-  );
-  const targetPath = await copyToAvailableArchivePath(
+  const targetPath = await moveToAvailableArchivePath(
+    config,
     absolutePath,
     archiveAbsolutePath,
     archivePath,
   );
-  await rm(absolutePath);
 
   return { operation: "archived", archivedPath: targetPath.relativePath };
 }
@@ -259,7 +215,8 @@ function resolveArchivePath(
   }
 }
 
-async function copyToAvailableArchivePath(
+async function moveToAvailableArchivePath(
+  config: RemoveVaultNoteConfig,
   sourcePath: string,
   archiveAbsolutePath: string,
   archiveRelativePath: string,
@@ -278,7 +235,17 @@ async function copyToAvailableArchivePath(
       `${parsedRelativePath.name}${suffix}${parsedRelativePath.ext}`,
     );
     try {
-      await copyFile(sourcePath, absolutePath, constants.COPYFILE_EXCL);
+      await mkdir(path.dirname(absolutePath), { recursive: true });
+      await ensureParentInsideVault(
+        config.vaultPath,
+        absolutePath,
+        VaultRemoveError,
+      );
+      await moveFilesystemFile({
+        fromAbsolutePath: sourcePath,
+        toAbsolutePath: absolutePath,
+        overwrite: false,
+      });
       return { absolutePath, relativePath };
     } catch (error) {
       if (isAlreadyExistsError(error)) {
@@ -324,25 +291,6 @@ function isAlreadyExistsError(error: unknown): boolean {
     error !== null &&
     "code" in error &&
     error.code === "EEXIST"
-  );
-}
-
-function isDirectoryNotEmptyError(error: unknown): boolean {
-  return (
-    isErrorWithCode(error, "ENOTEMPTY") || isErrorWithCode(error, "EEXIST")
-  );
-}
-
-function isMissingDirectoryError(error: unknown): boolean {
-  return isErrorWithCode(error, "ENOENT");
-}
-
-function isErrorWithCode(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === code
   );
 }
 

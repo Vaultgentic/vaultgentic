@@ -98,6 +98,13 @@ export {
 } from "./remove.js";
 
 export {
+  moveVaultNote,
+  VaultMoveError,
+  type MoveVaultNoteOptions,
+  type MoveVaultNoteResult,
+} from "./move.js";
+
+export {
   searchVault,
   type HybridComponentName,
   type HybridComponentScore,

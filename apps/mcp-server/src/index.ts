@@ -3,6 +3,7 @@ import {
   defaultArchiveFolder,
   defaultArchiveOnRemove,
   initializeSearchDatabase,
+  moveVaultNote,
   patchVaultNote,
   readVaultTarget,
   removeVaultNote,
@@ -27,6 +28,12 @@ import {
   sharedCorePackageName,
   toMcpToolError,
 } from "./tools/shared.js";
+import {
+  createMoveToolHandler,
+  moveToolInputSchema,
+  type MoveToolInput,
+  type MoveToolResponse,
+} from "./tools/move.js";
 import {
   createPatchToolHandler,
   patchToolInputSchema,
@@ -63,6 +70,7 @@ export {
   createMcpIndexRefreshCoordinator,
   forbiddenMcpToolNameParts,
   mcpToolPrefix,
+  moveToolInputSchema,
   patchToolInputSchema,
   plannedMcpToolNames,
   readToolInputSchema,
@@ -76,6 +84,7 @@ type VaultgenticMcpServer = {
   config: Awaited<ReturnType<typeof loadMcpServerConfig>>;
   databaseStatus: DatabaseStatus;
   ensureIndexFresh: () => Promise<RefreshSearchIndexResult>;
+  move: (input: MoveToolInput) => Promise<MoveToolResponse>;
   patch: (input: PatchToolInput) => Promise<PatchToolResponse>;
   read: (input: ReadToolInput) => Promise<ReadToolResponse>;
   remove: (input: RemoveToolInput) => Promise<RemoveToolResponse>;
@@ -92,6 +101,7 @@ type CreateVaultgenticMcpServerOptions = {
   refreshIndex?: (
     config: SearchDatabaseConfig,
   ) => Promise<RefreshSearchIndexResult>;
+  move?: typeof moveVaultNote;
   patch?: typeof patchVaultNote;
   read?: typeof readVaultTarget;
   refreshThrottleMs?: number;
@@ -117,6 +127,9 @@ const writeToolDescription =
 
 const patchToolDescription =
   "Apply a Vaultgentic agent patch to one existing vault note. Patch text must use *** Begin Patch, exactly one *** Update File: <path> matching the tool path, one or more @@ chunks, context lines prefixed by space, removals with -, additions with +, and *** End Patch. Add File, Delete File, Move to, multi-operation patches, and path mismatches are unsupported. Read the note first to get exact content and fileHash, then pass expectedFileHash for concurrency safety. On hash mismatch re-read and regenerate the patch from fresh content. Returns metadata only and does not echo patch or note content.";
+
+const moveToolDescription =
+  "Move or rename one existing vault note by vault-relative .md paths. Read first and pass expectedFileHash to prevent stale concurrent moves. Destination parents are created as needed; existing destinations are rejected unless overwrite=true. Empty source parent directories are pruned by default; set pruneEmptyParents=false to opt out. This is a move, not an archive, and returns metadata only.";
 
 function createRemoveToolDescription(
   config: Awaited<ReturnType<typeof loadMcpServerConfig>>,
@@ -176,6 +189,10 @@ export async function createVaultgenticMcpServer(
     config,
     patch: options.patch ?? patchVaultNote,
   });
+  const move = createMoveToolHandler({
+    config,
+    move: options.move ?? moveVaultNote,
+  });
   const remove = createRemoveToolHandler({
     config,
     remove: options.remove ?? removeVaultNote,
@@ -213,11 +230,18 @@ export async function createVaultgenticMcpServer(
     removeToolInputSchema.shape,
     async (input) => toMcpToolResult(remove(input)),
   );
+  server.tool(
+    "vaultgentic_move",
+    moveToolDescription,
+    moveToolInputSchema.shape,
+    async (input) => toMcpToolResult(move(input)),
+  );
 
   return {
     config,
     databaseStatus: refreshResult.status,
     ensureIndexFresh: refreshCoordinator.ensureIndexFresh,
+    move,
     patch,
     read,
     remove,
