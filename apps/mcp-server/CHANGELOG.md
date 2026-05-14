@@ -1,5 +1,16 @@
 # @vaultgentic/mcp-server
 
+## 0.3.0
+
+### Minor Changes
+
+- a1fe5e1: Add a vault note move service and expose it through the `vaultgentic_move` MCP tool.
+
+### Patch Changes
+
+- Updated dependencies [a1fe5e1]
+  - @vaultgentic/core@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
