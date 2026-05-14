@@ -15,12 +15,14 @@ Vaultgentic exposes a markdown vault via MCP tools. Use them proactively — sea
 - `vaultgentic:vaultgentic_write` — create or replace a `.md` note. `body`, `frontmatter`, `tags`, and `aliases` are separate parameters — pass structured frontmatter, do not embed YAML in `body`
 - `vaultgentic:vaultgentic_patch` — apply a Vaultgentic agent patch to one existing note. Use `*** Begin Patch`, exactly one `*** Update File: <path>` matching the tool `path`, `@@` chunks with context lines prefixed by space, removals with `-`, additions with `+`, and `*** End Patch`. Add, delete, move, path mismatch, and multi-operation patches are unsupported. Read first, then pass `expectedFileHash` from the read for concurrency safety; on hash mismatch or failed matching, re-read and regenerate the patch
 - `vaultgentic:vaultgentic_remove` — remove a note. Pass `expectedFileHash`; surface the response's `operation` (archived/deleted) and any `archivedPath`
+- `vaultgentic:vaultgentic_move` — move or rename one existing `.md` note by vault-relative paths. Read first and pass `expectedFileHash`; use `overwrite=true` only when replacing an existing destination is intended. Prefer this over read/write/remove when relocating notes because it avoids archive duplicates
 
 ## When to act
 
 - **Search/read** before writing, when retrieving prior context, or when a named note may exist
 - **Write** for new notes or full rewrites of durable content
 - **Patch** for targeted changes to part of an existing note
+- **Move** when renaming or relocating a note; do not simulate moves with write plus remove
 - **Remove** when the user asks to delete a note, a note is superseded, or a duplicate should go
 
 Do not store secrets, ephemeral state, raw transcripts, chain-of-thought, or facts already captured in code, tests, git history, or an issue tracker.
