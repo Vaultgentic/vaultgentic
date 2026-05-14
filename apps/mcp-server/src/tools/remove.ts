@@ -25,6 +25,12 @@ export const removeToolInputSchema = z.object({
     .describe(
       "sha256:<hex> hash from a prior read. Recommended to prevent stale concurrent deletion.",
     ),
+  pruneEmptyParents: z
+    .boolean()
+    .optional()
+    .describe(
+      "Prune empty parent directories after removal. Defaults to true; set false to leave directories in place.",
+    ),
 });
 
 export function createRemoveToolHandler(options: {
@@ -39,6 +45,9 @@ export function createRemoveToolHandler(options: {
         ...(parsedInput.expectedFileHash === undefined
           ? {}
           : { expectedFileHash: parsedInput.expectedFileHash }),
+        ...(parsedInput.pruneEmptyParents === undefined
+          ? {}
+          : { pruneEmptyParents: parsedInput.pruneEmptyParents }),
       });
 
       return { result };

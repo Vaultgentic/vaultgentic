@@ -8,7 +8,7 @@ import { createRemoveToolHandler, removeToolInputSchema } from "./remove.js";
 describe("GIVEN the MCP remove tool", () => {
   describe("WHEN removing vault notes", () => {
     describe("THEN inputs are validated and delegated to the shared remove service", () => {
-      it("SHOULD pass path and expected file hash to the shared remove service", async () => {
+      it("SHOULD pass path expected file hash and pruning preference to the shared remove service", async () => {
         const removes: RemoveVaultNoteOptions[] = [];
         const remove = createRemoveToolHandler({
           config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
@@ -22,6 +22,7 @@ describe("GIVEN the MCP remove tool", () => {
           path: "notes/alpha.md",
           expectedFileHash:
             "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          pruneEmptyParents: false,
         });
 
         expect(removes).toEqual([
@@ -29,6 +30,7 @@ describe("GIVEN the MCP remove tool", () => {
             path: "notes/alpha.md",
             expectedFileHash:
               "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            pruneEmptyParents: false,
           },
         ]);
         expect(response).toEqual({
@@ -37,11 +39,12 @@ describe("GIVEN the MCP remove tool", () => {
             operation: "archived",
             archivedPath: ".vaultgentic/archive/notes/alpha.md",
             indexRemoved: true,
+            prunedDirectories: [],
           },
         });
       });
 
-      it("SHOULD omit missing expected file hash from delegated options", async () => {
+      it("SHOULD omit missing optional values from delegated options", async () => {
         const removes: RemoveVaultNoteOptions[] = [];
         const remove = createRemoveToolHandler({
           config: { vaultPath: "/vault", databasePath: "/db.sqlite" },
@@ -63,6 +66,7 @@ describe("GIVEN the MCP remove tool", () => {
             path: "alpha.md",
             operation: "deleted",
             indexRemoved: false,
+            prunedDirectories: [],
             warning:
               "Note was removed, but search index cleanup failed. Search results may be stale.",
           }),
@@ -75,6 +79,7 @@ describe("GIVEN the MCP remove tool", () => {
             path: "alpha.md",
             operation: "deleted",
             indexRemoved: false,
+            prunedDirectories: [],
             warning:
               "Note was removed, but search index cleanup failed. Search results may be stale.",
           },
@@ -125,5 +130,6 @@ function createRemoveResult(options: { path: string }): RemoveVaultNoteResult {
     operation: "archived",
     archivedPath: `.vaultgentic/archive/${options.path}`,
     indexRemoved: true,
+    prunedDirectories: [],
   };
 }

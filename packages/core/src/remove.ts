@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm, rmdir } from "node:fs/promises";
 import path from "node:path";
 import {
   defaultArchiveFolder,
@@ -21,12 +21,14 @@ import {
 export type RemoveVaultNoteOptions = {
   path: string;
   expectedFileHash?: string;
+  pruneEmptyParents?: boolean;
 };
 
 export type RemoveVaultNoteResult = {
   path: string;
   operation: "archived" | "deleted";
   indexRemoved: boolean;
+  prunedDirectories: string[];
   archivedPath?: string;
   warning?: string;
 };
@@ -50,6 +52,9 @@ export class VaultRemoveError extends VaultgenticError {
 
 const indexCleanupFailedWarning =
   "Note was removed, but search index cleanup failed. Search results may be stale.";
+
+const directoryPruningFailedWarning =
+  "Note was removed, but empty parent directory pruning failed.";
 
 export async function removeVaultNote(
   config: RemoveVaultNoteConfig,
@@ -88,18 +93,25 @@ export async function removeVaultNote(
     const removeResult: FilesystemRemoveResult = archiveOnRemove
       ? await archiveNote(config, absolutePath, relativePath)
       : await deleteNote(absolutePath);
+    const pruneResult = await pruneEmptyParentDirectories(
+      config,
+      relativePath,
+      {
+        enabled: options.pruneEmptyParents !== false,
+      },
+    );
     const indexResult = removeIndexedNote(config, relativePath);
+    const warning = combineWarnings(pruneResult.warning, indexResult.warning);
 
     return {
       path: relativePath,
       operation: removeResult.operation,
       indexRemoved: indexResult.indexRemoved,
+      prunedDirectories: pruneResult.prunedDirectories,
       ...(removeResult.archivedPath === undefined
         ? {}
         : { archivedPath: removeResult.archivedPath }),
-      ...(indexResult.warning === undefined
-        ? {}
-        : { warning: indexResult.warning }),
+      ...(warning === undefined ? {} : { warning }),
     };
   } catch (error) {
     if (error instanceof VaultRemoveError) {
@@ -110,6 +122,68 @@ export async function removeVaultNote(
       `Failed to remove vault note ${options.path}: ${errorMessage(error)}`,
       { cause: error },
     );
+  }
+}
+
+async function pruneEmptyParentDirectories(
+  config: RemoveVaultNoteConfig,
+  relativePath: string,
+  options: { enabled: boolean },
+): Promise<{ prunedDirectories: string[]; warning?: string }> {
+  if (!options.enabled) {
+    return { prunedDirectories: [] };
+  }
+
+  const prunedDirectories: string[] = [];
+  let parentRelativePath = path.posix.dirname(relativePath);
+
+  try {
+    while (shouldPruneParent(parentRelativePath)) {
+      const absoluteParentPath = path.resolve(
+        config.vaultPath,
+        parentRelativePath,
+      );
+      ensurePathInsideVault(config.vaultPath, absoluteParentPath);
+
+      try {
+        await rmdir(absoluteParentPath);
+      } catch (error) {
+        if (isDirectoryNotEmptyError(error) || isMissingDirectoryError(error)) {
+          break;
+        }
+
+        throw error;
+      }
+
+      prunedDirectories.push(parentRelativePath);
+      parentRelativePath = path.posix.dirname(parentRelativePath);
+    }
+
+    return { prunedDirectories };
+  } catch {
+    return {
+      prunedDirectories,
+      warning: directoryPruningFailedWarning,
+    };
+  }
+}
+
+function shouldPruneParent(relativePath: string): boolean {
+  if (relativePath === "." || relativePath === "") {
+    return false;
+  }
+
+  return relativePath.split("/").length > 1;
+}
+
+function ensurePathInsideVault(vaultPath: string, absolutePath: string): void {
+  const relativePath = path.relative(vaultPath, absolutePath);
+  if (
+    relativePath === "" ||
+    relativePath.startsWith("..") ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new VaultRemoveError("Pruned directory must stay inside the vault");
   }
 }
 
@@ -251,6 +325,39 @@ function isAlreadyExistsError(error: unknown): boolean {
     "code" in error &&
     error.code === "EEXIST"
   );
+}
+
+function isDirectoryNotEmptyError(error: unknown): boolean {
+  return (
+    isErrorWithCode(error, "ENOTEMPTY") || isErrorWithCode(error, "EEXIST")
+  );
+}
+
+function isMissingDirectoryError(error: unknown): boolean {
+  return isErrorWithCode(error, "ENOENT");
+}
+
+function isErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === code
+  );
+}
+
+function combineWarnings(
+  firstWarning: string | undefined,
+  secondWarning: string | undefined,
+): string | undefined {
+  if (firstWarning === undefined) {
+    return secondWarning;
+  }
+  if (secondWarning === undefined) {
+    return firstWarning;
+  }
+
+  return `${firstWarning} ${secondWarning}`;
 }
 
 function errorMessage(error: unknown): string {

@@ -694,6 +694,7 @@ describe("GIVEN the MCP server skeleton", () => {
           path: "notes/alpha.md",
           expectedFileHash:
             "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          pruneEmptyParents: false,
         });
 
         expect(removes).toEqual([
@@ -701,6 +702,7 @@ describe("GIVEN the MCP server skeleton", () => {
             path: "notes/alpha.md",
             expectedFileHash:
               "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            pruneEmptyParents: false,
           },
         ]);
         expect(response).toEqual({
@@ -709,6 +711,7 @@ describe("GIVEN the MCP server skeleton", () => {
             operation: "archived",
             archivedPath: ".vaultgentic/archive/notes/alpha.md",
             indexRemoved: true,
+            prunedDirectories: [],
           },
         });
         expect(JSON.stringify(response)).not.toContain("Secret body");
@@ -963,6 +966,9 @@ describe("GIVEN the MCP server skeleton", () => {
         expect(
           getRegisteredToolDescription(mcpServer.server, "vaultgentic_remove"),
         ).toContain("Configured to archive removed notes under");
+        expect(
+          getRegisteredToolDescription(mcpServer.server, "vaultgentic_remove"),
+        ).toContain("pruneEmptyParents=false");
       });
 
       it("SHOULD return patch metadata through vaultgentic_patch", async () => {
@@ -1026,6 +1032,7 @@ describe("GIVEN the MCP server skeleton", () => {
             operation: "archived",
             archivedPath: ".vaultgentic/archive/alpha.md",
             indexRemoved: true,
+            prunedDirectories: [],
           },
         });
         expect(result.isError).toBeUndefined();
@@ -1200,5 +1207,6 @@ function createRemoveResult(options: { path: string }): RemoveVaultNoteResult {
     operation: "archived",
     archivedPath: `.vaultgentic/archive/${options.path}`,
     indexRemoved: true,
+    prunedDirectories: [],
   };
 }

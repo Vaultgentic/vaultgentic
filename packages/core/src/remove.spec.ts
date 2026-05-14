@@ -55,6 +55,7 @@ describe("GIVEN a vault remove service", () => {
           operation: "archived",
           archivedPath: "_archives/notes/alpha.md",
           indexRemoved: true,
+          prunedDirectories: [],
         });
         await expect(
           readFile(path.join(config.vaultPath, "notes/alpha.md"), "utf8"),
@@ -120,6 +121,7 @@ describe("GIVEN a vault remove service", () => {
           path: "alpha.md",
           operation: "deleted",
           indexRemoved: true,
+          prunedDirectories: [],
         });
         await expect(
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
@@ -185,6 +187,7 @@ describe("GIVEN a vault remove service", () => {
           operation: "archived",
           archivedPath: "_archives/alpha.md",
           indexRemoved: false,
+          prunedDirectories: [],
           warning:
             "Note was removed, but search index cleanup failed. Search results may be stale.",
         });
@@ -229,6 +232,86 @@ describe("GIVEN a vault remove service", () => {
           readFile(path.join(config.vaultPath, "alpha.md"), "utf8"),
         ).resolves.toBe("No escape.");
         expect(removeIndexedVaultPathMock).not.toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe("WHEN empty parent pruning is enabled", () => {
+    describe("THEN only empty nested parents below the top level are removed", () => {
+      it("SHOULD report pruned directories after archiving the note", async () => {
+        const config = await createFixture("prune-empty-parents");
+        await mkdir(path.join(config.vaultPath, "projects/acme/tasks"), {
+          recursive: true,
+        });
+        await writeFile(
+          path.join(config.vaultPath, "projects/acme/tasks/todo.md"),
+          "Archive me.",
+        );
+
+        const result = await removeVaultNote(config, {
+          path: "projects/acme/tasks/todo.md",
+        });
+
+        expect(result).toMatchObject({
+          path: "projects/acme/tasks/todo.md",
+          operation: "archived",
+          prunedDirectories: ["projects/acme/tasks", "projects/acme"],
+        });
+        await expect(
+          readdir(path.join(config.vaultPath, "projects/acme")),
+        ).rejects.toMatchObject({ code: "ENOENT" });
+        await expect(
+          readdir(path.join(config.vaultPath, "projects")),
+        ).resolves.toEqual([]);
+      });
+
+      it("SHOULD stop pruning at a non-empty parent directory", async () => {
+        const config = await createFixture("prune-non-empty-stop");
+        await mkdir(path.join(config.vaultPath, "projects/acme/tasks"), {
+          recursive: true,
+        });
+        await writeFile(
+          path.join(config.vaultPath, "projects/acme/tasks/todo.md"),
+          "Archive me.",
+        );
+        await writeFile(
+          path.join(config.vaultPath, "projects/acme/overview.md"),
+          "Keep parent.",
+        );
+
+        const result = await removeVaultNote(config, {
+          path: "projects/acme/tasks/todo.md",
+        });
+
+        expect(result.prunedDirectories).toEqual(["projects/acme/tasks"]);
+        await expect(
+          readFile(path.join(config.vaultPath, "projects/acme/overview.md")),
+        ).resolves.toBeDefined();
+      });
+    });
+  });
+
+  describe("WHEN empty parent pruning is disabled", () => {
+    describe("THEN source directories are left in place", () => {
+      it("SHOULD skip pruning and report no pruned directories", async () => {
+        const config = await createFixture("prune-disabled");
+        await mkdir(path.join(config.vaultPath, "projects/acme/tasks"), {
+          recursive: true,
+        });
+        await writeFile(
+          path.join(config.vaultPath, "projects/acme/tasks/todo.md"),
+          "Delete me.",
+        );
+
+        const result = await removeVaultNote(config, {
+          path: "projects/acme/tasks/todo.md",
+          pruneEmptyParents: false,
+        });
+
+        expect(result.prunedDirectories).toEqual([]);
+        await expect(
+          readdir(path.join(config.vaultPath, "projects/acme/tasks")),
+        ).resolves.toEqual([]);
       });
     });
   });

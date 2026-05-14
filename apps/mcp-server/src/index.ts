@@ -126,7 +126,7 @@ function createRemoveToolDescription(
     ? `Configured to archive removed notes under ${config.archiveFolder ?? defaultArchiveFolder}.`
     : "Configured to permanently delete removed notes.";
 
-  return `Remove a vault note by vault-relative .md path. Read first and pass expectedFileHash to prevent stale concurrent deletion. ${removeBehavior} Returns metadata only and does not echo note content.`;
+  return `Remove a vault note by vault-relative .md path. Read first and pass expectedFileHash to prevent stale concurrent deletion. Empty parent directories are pruned by default; set pruneEmptyParents=false to opt out. ${removeBehavior} Returns metadata only and does not echo note content.`;
 }
 
 export function isMainModule(
