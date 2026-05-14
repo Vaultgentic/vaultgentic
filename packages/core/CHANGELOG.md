@@ -1,5 +1,11 @@
 # @vaultgentic/core
 
+## 0.2.0
+
+### Minor Changes
+
+- a5794bb: Add `pruneEmptyParents` support to `vaultgentic_remove`, pruning empty source parent directories by default while reporting the removed directories and allowing callers to opt out.
+
 ## 0.1.0
 
 ### Minor Changes
